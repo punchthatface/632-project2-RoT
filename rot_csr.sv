@@ -98,8 +98,7 @@ module rot_csr (
   always_ff @(posedge clk, negedge rst_n) begin
     if (!rst_n) begin
       regs_reg <= '0;
-    end
-    else begin
+    end else begin
       if (we) begin
         unique case (addr)
           ADDR_UNLOCK_KEY: regs_reg.unlock_key <= data_from_cpu;

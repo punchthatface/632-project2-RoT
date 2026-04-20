@@ -44,16 +44,17 @@ package rot_pkg;
 
   typedef enum logic [CMD_W-1:0] {
     CMD_NOP        = 4'h0, // no operation
-    CMD_AES        = 4'h1, // normal AES encryption using AES_IN
-    CMD_AES_CTR    = 4'h2, // AES in CTR mode
-    CMD_AES_PUF    = 4'h3, // AES using next padded PUF chunk as plaintext
-    CMD_PUF_GEN    = 4'h4, // generate 120-bit PUF signature
-    CMD_TRNG_GEN32 = 4'h5, // generate 32 fresh TRNG bits
-    CMD_TRNG_GEN16 = 4'h6, // generate 16 fresh TRNG bits
-    CMD_PRNG_SEED  = 4'h7, // seed shared LFSR from TRNG data
-    CMD_PRNG_START = 4'h8, // start PRNG running mode
-    CMD_PRNG_STOP  = 4'h9, // stop PRNG running mode
-    CMD_PRIME      = 4'hA  // start primality check
+    CMD_UNLOCK     = 4'h1, // starts unlock procedure
+    CMD_AES        = 4'h2, // normal AES encryption using AES_IN
+    CMD_AES_CTR    = 4'h3, // AES in CTR mode
+    CMD_AES_PUF    = 4'h4, // AES using next padded PUF chunk as plaintext
+    CMD_PUF_GEN    = 4'h5, // generate 120-bit PUF signature
+    CMD_TRNG_GEN32 = 4'h6, // generate 32 fresh TRNG bits
+    CMD_TRNG_GEN16 = 4'h7, // generate 16 fresh TRNG bits
+    CMD_PRNG_SEED  = 4'h8, // seed shared LFSR from TRNG data
+    CMD_PRNG_START = 4'h9, // start PRNG running mode
+    CMD_PRNG_STOP  = 4'hA, // stop PRNG running mode
+    CMD_PRIME      = 4'hB  // start primality check
   } cmd_t;
 
   // ============================================================

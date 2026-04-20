@@ -10,27 +10,41 @@ module rot (
 );
 
   typedef enum logic [4:0] {
-    ST_LOCK_0    = 5'd0,
-    ST_LOCK_1    = 5'd1,
-    ST_LOCK_2    = 5'd2,
-    ST_LOCK_3    = 5'd3,
-    ST_LOCK_4    = 5'd4,
-    ST_LOCK_5    = 5'd5,
-    ST_LOCK_6    = 5'd6,
-    ST_LOCK_7    = 5'd7,
-    ST_LOCK_TRAP = 5'd8,
+    ST_LOCK_0,
+    ST_LOCK_1,
+    ST_LOCK_2,
+    ST_LOCK_3,
+    ST_LOCK_4,
+    ST_LOCK_5,
+    ST_LOCK_6,
+    ST_LOCK_7,
+    ST_LOCK_TRAP,
 
-    ST_IDLE      = 5'd9,
+    ST_IDLE,
 
-    ST_AES       = 5'd10,
-    ST_AES_CTR   = 5'd11,
-    ST_AES_PUF   = 5'd12,
-    ST_PUF       = 5'd13,
-    ST_TRNG32    = 5'd14,
-    ST_TRNG16    = 5'd15,
-    ST_PRNG_SEED = 5'd16,
-    ST_PRNG_RUN  = 5'd17,
-    ST_PRIME     = 5'd18
+    ST_AES_START,
+    ST_AES_WAIT,
+
+    ST_AES_CTR_START,
+    ST_AES_CTR_WAIT,
+
+    ST_AES_PUF_START,
+    ST_AES_PUF_WAIT,
+
+    ST_PUF_START,
+    ST_PUF_WAIT,
+
+    ST_TRNG32_START,
+    ST_TRNG32_WAIT,
+
+    ST_TRNG16_START,
+    ST_TRNG16_WAIT,
+
+    ST_PRNG_SEED,
+    ST_PRNG_RUN,
+
+    ST_PRIME_START,
+    ST_PRIME_WAIT
   } rot_state_t;
 
   rot_state_t state, state_next;
@@ -40,24 +54,27 @@ module rot (
   status_reg_t status;
   rot_hw_wr_t  hw_wr;
 
-  logic        cmd_valid;
+  logic        cmd_valid, unlock_key_we, unlock_start;
   cmd_t        cmd_opcode;
-  logic        unlock_key_we;
 
-  logic             aes_go, aes_load, aes_ready;
-  logic [AES_W-1:0] aes_counter1, aes_plaintext, aes_key, aes_ciphertext;
+  logic               aes_go, aes_ctr_mode, aes_done;
+  logic [AES_W-1:0]   aes_block_in, aes_key, aes_block_out;
 
-  logic             prime_go, isprime, isnotprime;
+  logic               prime_go, isprime, prime_done;
   logic [PRIME_W-1:0] prime_number;
+
+  logic               puf_gen, puf_ready;
+  logic [PUF_W-1:0]   puf_sig;
+
+  logic               trng_gen32, trng_gen16, trng_ready;
+  logic [TRNG_W-1:0]  trng_word;
 
   rot_csr u_rot_csr (
     .clk(clk), .rst_n(rst_n),
     .addr(addr), .data_from_cpu(data_from_cpu),
     .re(re), .we(we),
-
     .status_in(status),
     .hw_wr(hw_wr),
-
     .regs_out(regs),
     .cmd_valid(cmd_valid),
     .cmd_opcode(cmd_opcode),
@@ -65,20 +82,27 @@ module rot (
     .data_to_cpu(data_to_cpu)
   );
 
+  assign unlock_start = cmd_valid && (cmd_opcode == CMD_UNLOCK);
+
+  // ------------------------------------------------------------
+  // Shared AES engine
+  // ------------------------------------------------------------
   aesctr #(
     .WIDTH(AES_W)
   ) u_aesctr (
     .clk(clk),
     .rst_n(rst_n),
     .go(aes_go),
-    .load(aes_load),
-    .counter1(aes_counter1),
-    .plaintext(aes_plaintext),
+    .ctr_mode(aes_ctr_mode),
+    .block_in(aes_block_in),
     .key(aes_key),
-    .ciphertext(aes_ciphertext),
-    .ready(aes_ready)
+    .block_out(aes_block_out),
+    .done(aes_done)
   );
 
+  // ------------------------------------------------------------
+  // Prime checker
+  // ------------------------------------------------------------
   prime #(
     .WIDTH(PRIME_W)
   ) u_prime (
@@ -87,9 +111,33 @@ module rot (
     .go(prime_go),
     .number(prime_number),
     .isprime(isprime),
-    .isnotprime(isnotprime)
+    .done(prime_done)
   );
 
+  // ------------------------------------------------------------
+  // Future PUF / TRNG blocks
+  // ------------------------------------------------------------
+  //
+  // puf u_puf (
+  //   .clk(clk),
+  //   .rst_n(rst_n),
+  //   .gen(puf_gen),
+  //   .puf_sig(puf_sig),
+  //   .pufready(puf_ready)
+  // );
+  //
+  // trng u_trng (
+  //   .clk(clk),
+  //   .rst_n(rst_n),
+  //   .gen32(trng_gen32),
+  //   .gen16(trng_gen16),
+  //   .trng_word(trng_word),
+  //   .trngready(trng_ready)
+  // );
+
+  // ------------------------------------------------------------
+  // STATUS composition
+  // ------------------------------------------------------------
   always_comb begin
     status.word = '0;
 
@@ -116,270 +164,417 @@ module rot (
     status.bits.fault_or_lockout   = ctrl.lockout;
   end
 
+  // ------------------------------------------------------------
+  // Top-level control FSM
+  // ------------------------------------------------------------
   always_comb begin
     state_next = state;
     ctrl_next  = ctrl;
-    hw_wr      = '0;
+    hw_wr      = '0';
 
-    aes_go        = 1'b0;
-    aes_load      = 1'b0;
-    aes_counter1  = '0;
-    aes_plaintext = '0;
-    aes_key       = '0;
+    aes_go       = 1'b0;
+    aes_ctr_mode = 1'b0;
+    aes_block_in = '0;
+    aes_key      = '0;
 
-    prime_go      = 1'b0;
-    prime_number  = regs.prime_in[PRIME_W-1:0];
+    prime_go     = 1'b0;
+    prime_number = regs.prime_in[PRIME_W-1:0];
 
-    // default: clear one-cycle reject pulse
+    puf_gen      = 1'b0;
+    trng_gen32   = 1'b0;
+    trng_gen16   = 1'b0;
+
     ctrl_next.cmd_rejected = 1'b0;
+
+    ctrl_next.busy_global  = 1'b0;
+    ctrl_next.busy_aes     = 1'b0;
+    ctrl_next.busy_aes_ctr = 1'b0;
+    ctrl_next.busy_puf     = 1'b0;
+    ctrl_next.busy_trng    = 1'b0;
+    ctrl_next.busy_prng    = 1'b0;
+    ctrl_next.busy_prime   = 1'b0;
 
     case (state)
 
+      // --------------------------------------------------------
+      // Unlock / obfuscation region
+      // --------------------------------------------------------
       ST_LOCK_0: begin
-        if (unlock_key_we) begin
-          if (regs.unlock_key[31] && regs.unlock_key[8] && !regs.unlock_key[0]) begin
+        if (unlock_start) begin
+          ctrl_next.busy_global = 1'b1;
+
+          if ( regs.unlock_key[31] &&
+               regs.unlock_key[28] &&
+              !regs.unlock_key[24] &&
+               regs.unlock_key[20]) begin
             state_next = ST_LOCK_1;
-          end
-          else begin
+          end else begin
             state_next = ST_LOCK_TRAP;
           end
         end
       end
 
       ST_LOCK_1: begin
-        if (unlock_key_we) begin
-          if (!regs.unlock_key[26] && regs.unlock_key[21] && regs.unlock_key[3]) begin
-            state_next = ST_LOCK_2;
-          end
-          else begin
-            state_next = ST_LOCK_TRAP;
-          end
+        ctrl_next.busy_global = 1'b1;
+
+        if (!regs.unlock_key[30] &&
+            !regs.unlock_key[27] &&
+            !regs.unlock_key[23] &&
+             regs.unlock_key[19]) begin
+          state_next = ST_LOCK_2;
+        end else begin
+          state_next = ST_LOCK_TRAP;
         end
       end
 
       ST_LOCK_2: begin
-        if (unlock_key_we) begin
-          if (regs.unlock_key[24] && !regs.unlock_key[13] && regs.unlock_key[7]) begin
-            state_next = ST_LOCK_3;
-          end
-          else begin
-            state_next = ST_LOCK_TRAP;
-          end
+        ctrl_next.busy_global = 1'b1;
+
+        if ( regs.unlock_key[29] &&
+            !regs.unlock_key[26] &&
+             regs.unlock_key[22] &&
+             regs.unlock_key[18]) begin
+          state_next = ST_LOCK_3;
+        end else begin
+          state_next = ST_LOCK_TRAP;
         end
       end
 
       ST_LOCK_3: begin
-        if (unlock_key_we) begin
-          // PSEUDOCODE: replace with real chosen subset check
+        ctrl_next.busy_global = 1'b1;
+
+        if ( regs.unlock_key[25] &&
+             regs.unlock_key[21] &&
+            !regs.unlock_key[17] &&
+            !regs.unlock_key[13]) begin
           state_next = ST_LOCK_4;
+        end else begin
+          state_next = ST_LOCK_TRAP;
         end
       end
 
       ST_LOCK_4: begin
-        if (unlock_key_we) begin
-          // PSEUDOCODE: replace with real chosen subset check
+        ctrl_next.busy_global = 1'b1;
+
+        if ( regs.unlock_key[16] &&
+             regs.unlock_key[12] &&
+             regs.unlock_key[8]  &&
+             regs.unlock_key[4]) begin
           state_next = ST_LOCK_5;
+        end else begin
+          state_next = ST_LOCK_TRAP;
         end
       end
 
       ST_LOCK_5: begin
-        if (unlock_key_we) begin
-          // PSEUDOCODE: replace with real chosen subset check
+        ctrl_next.busy_global = 1'b1;
+
+        if (!regs.unlock_key[15] &&
+            !regs.unlock_key[11] &&
+            !regs.unlock_key[7]  &&
+             regs.unlock_key[3]) begin
           state_next = ST_LOCK_6;
+        end else begin
+          state_next = ST_LOCK_TRAP;
         end
       end
 
       ST_LOCK_6: begin
-        if (unlock_key_we) begin
-          // PSEUDOCODE: replace with real chosen subset check
+        ctrl_next.busy_global = 1'b1;
+
+        if ( regs.unlock_key[14] &&
+             regs.unlock_key[10] &&
+            !regs.unlock_key[6]  &&
+            !regs.unlock_key[2]) begin
           state_next = ST_LOCK_7;
+        end else begin
+          state_next = ST_LOCK_TRAP;
         end
       end
 
       ST_LOCK_7: begin
-        if (unlock_key_we) begin
-          // PSEUDOCODE: replace with final chosen subset check
-          ctrl_next.unlocked = 1'b1;
+        ctrl_next.busy_global = 1'b1;
+
+        if (!regs.unlock_key[9] &&
+             regs.unlock_key[5] &&
+             regs.unlock_key[1] &&
+            !regs.unlock_key[0]) begin
+          ctrl_next.unlocked    = 1'b1;
+          ctrl_next.busy_global = 1'b0;
           state_next = ST_IDLE;
+        end else begin
+          state_next = ST_LOCK_TRAP;
         end
       end
 
       ST_LOCK_TRAP: begin
-        ctrl_next.lockout = 1'b1;
+        ctrl_next.lockout     = 1'b1;
+        ctrl_next.busy_global = 1'b0;
         state_next = ST_LOCK_TRAP;
       end
 
+      // --------------------------------------------------------
+      // Idle / command dispatch
+      // --------------------------------------------------------
       ST_IDLE: begin
         if (cmd_valid) begin
-          if (!ctrl.unlocked || ctrl.lockout || ctrl.busy_global) begin
-            ctrl_next.cmd_rejected = 1'b1;
-          end
-          else begin
-            unique case (cmd_opcode)
-              CMD_AES: begin
-                ctrl_next.busy_global   = 1'b1;
-                ctrl_next.busy_aes      = 1'b1;
-                ctrl_next.aes_out_valid = 1'b0;
-                state_next = ST_AES;
-              end
+          unique case (cmd_opcode)
+            CMD_UNLOCK: begin
+            end
 
-              CMD_AES_CTR: begin
-                ctrl_next.busy_global   = 1'b1;
-                ctrl_next.busy_aes_ctr  = 1'b1;
-                ctrl_next.aes_out_valid = 1'b0;
-                state_next = ST_AES_CTR;
-              end
+            CMD_AES: begin
+              ctrl_next.aes_out_valid = 1'b0;
+              state_next = ST_AES_START;
+            end
 
-              CMD_AES_PUF: begin
-                ctrl_next.busy_global   = 1'b1;
-                ctrl_next.busy_aes      = 1'b1;
-                ctrl_next.aes_out_valid = 1'b0;
-                state_next = ST_AES_PUF;
-              end
+            CMD_AES_CTR: begin
+              ctrl_next.aes_out_valid = 1'b0;
+              state_next = ST_AES_CTR_START;
+            end
 
-              CMD_PUF_GEN: begin
-                ctrl_next.busy_global = 1'b1;
-                ctrl_next.busy_puf    = 1'b1;
-                ctrl_next.puf_valid   = 1'b0;
-                state_next = ST_PUF;
-              end
+            CMD_AES_PUF: begin
+              ctrl_next.aes_out_valid = 1'b0;
+              state_next = ST_AES_PUF_START;
+            end
 
-              CMD_TRNG_GEN32: begin
-                ctrl_next.busy_global = 1'b1;
-                ctrl_next.busy_trng   = 1'b1;
-                ctrl_next.trng_valid  = 1'b0;
-                state_next = ST_TRNG32;
-              end
+            CMD_PUF_GEN: begin
+              ctrl_next.puf_valid = 1'b0;
+              state_next = ST_PUF_START;
+            end
 
-              CMD_TRNG_GEN16: begin
-                ctrl_next.busy_global = 1'b1;
-                ctrl_next.busy_trng   = 1'b1;
-                ctrl_next.trng_valid  = 1'b0;
-                state_next = ST_TRNG16;
-              end
+            CMD_TRNG_GEN32: begin
+              ctrl_next.trng_valid = 1'b0;
+              state_next = ST_TRNG32_START;
+            end
 
-              CMD_PRNG_SEED: begin
-                state_next = ST_PRNG_SEED;
-              end
+            CMD_TRNG_GEN16: begin
+              ctrl_next.trng_valid = 1'b0;
+              state_next = ST_TRNG16_START;
+            end
 
-              CMD_PRNG_START: begin
-                ctrl_next.busy_global     = 1'b1;
-                ctrl_next.busy_prng       = 1'b1;
-                ctrl_next.prng_running    = 1'b1;
-                ctrl_next.prng_word_valid = 1'b0;
-                state_next = ST_PRNG_RUN;
-              end
+            CMD_PRNG_SEED: begin
+              state_next = ST_PRNG_SEED;
+            end
 
-              CMD_PRNG_STOP: begin
-                ctrl_next.cmd_rejected = 1'b1;
-              end
+            CMD_PRNG_START: begin
+              ctrl_next.prng_word_valid = 1'b0;
+              state_next = ST_PRNG_RUN;
+            end
 
-              CMD_PRIME: begin
-                ctrl_next.busy_global = 1'b1;
-                ctrl_next.busy_prime  = 1'b1;
-                ctrl_next.prime_valid = 1'b0;
-                state_next = ST_PRIME;
-              end
+            CMD_PRNG_STOP: begin
+            end
 
-              default: begin
-                ctrl_next.cmd_rejected = 1'b1;
-              end
-            endcase
-          end
+            CMD_PRIME: begin
+              ctrl_next.prime_valid = 1'b0;
+              state_next = ST_PRIME_START;
+            end
+
+            default: begin
+              ctrl_next.cmd_rejected = 1'b1;
+            end
+          endcase
         end
       end
 
-      ST_AES: begin
-        // PSEUDOCODE:
-        // aes_load      = 1'b1 / maybe only once after header update
-        // aes_go        = 1'b1;
-        // aes_key       = regs.aes_key;
-        // aes_plaintext = regs.aes_in;
-        if (aes_ready) begin
+      // --------------------------------------------------------
+      // AES / Prime one-shot launch-and-wait states
+      // --------------------------------------------------------
+      ST_AES_START: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_aes    = 1'b1;
+
+        aes_go       = 1'b1;
+        aes_ctr_mode = 1'b0;
+        aes_block_in = regs.aes_in;
+        aes_key      = regs.aes_key;
+
+        state_next = ST_AES_WAIT;
+      end
+
+      ST_AES_WAIT: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_aes    = 1'b1;
+
+        aes_ctr_mode = 1'b0;
+        aes_block_in = regs.aes_in;
+        aes_key      = regs.aes_key;
+
+        if (aes_done) begin
           hw_wr.en.aes_out = 1'b1;
-          hw_wr.aes_out    = aes_ciphertext;
+          hw_wr.aes_out    = aes_block_out;
 
-          ctrl_next.busy_global   = 1'b0;
-          ctrl_next.busy_aes      = 1'b0;
           ctrl_next.aes_out_valid = 1'b1;
           state_next = ST_IDLE;
         end
       end
 
-      ST_AES_CTR: begin
-        // PSEUDOCODE:
-        // use shared LFSR output as counter input after lfsr header/body update
-        if (aes_ready) begin
+      ST_AES_CTR_START: begin
+        ctrl_next.busy_global  = 1'b1;
+        ctrl_next.busy_aes_ctr = 1'b1;
+
+        aes_go       = 1'b1;
+        aes_ctr_mode = 1'b1;
+        aes_block_in = '0;
+        aes_key      = regs.aes_key;
+
+        state_next = ST_AES_CTR_WAIT;
+      end
+
+      ST_AES_CTR_WAIT: begin
+        ctrl_next.busy_global  = 1'b1;
+        ctrl_next.busy_aes_ctr = 1'b1;
+
+        aes_ctr_mode = 1'b1;
+        aes_block_in = '0;
+        aes_key      = regs.aes_key;
+
+        if (aes_done) begin
           hw_wr.en.aes_out = 1'b1;
-          hw_wr.aes_out    = aes_ciphertext;
+          hw_wr.aes_out    = aes_block_out;
 
-          ctrl_next.busy_global   = 1'b0;
-          ctrl_next.busy_aes_ctr  = 1'b0;
           ctrl_next.aes_out_valid = 1'b1;
           state_next = ST_IDLE;
         end
       end
 
-      ST_AES_PUF: begin
-        // PSEUDOCODE:
-        // choose next 30-bit chunk from regs.puf_sig
-        // pad to 128 bits
-        // run AES
-        if (aes_ready) begin
-          // PSEUDOCODE:
-          // write one of hw_wr.puf_enc[x]
-          ctrl_next.busy_global   = 1'b0;
-          ctrl_next.busy_aes      = 1'b0;
+      ST_AES_PUF_START: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_aes    = 1'b1;
+
+        aes_go       = 1'b1;
+        aes_ctr_mode = 1'b0;
+        aes_block_in = '0;
+        aes_key      = regs.aes_key;
+
+        state_next = ST_AES_PUF_WAIT;
+      end
+
+      ST_AES_PUF_WAIT: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_aes    = 1'b1;
+
+        aes_ctr_mode = 1'b0;
+        aes_block_in = '0;
+        aes_key      = regs.aes_key;
+
+        if (aes_done) begin
           ctrl_next.aes_out_valid = 1'b1;
           state_next = ST_IDLE;
         end
       end
 
-      ST_PUF: begin
-        // PSEUDOCODE:
-        // wait for future project-level PUF block done
+      ST_PRIME_START: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_prime  = 1'b1;
+
+        prime_go = 1'b1;
+
+        state_next = ST_PRIME_WAIT;
       end
 
-      ST_TRNG32: begin
-        // PSEUDOCODE:
-        // wait for future project-level TRNG block done
+      ST_PRIME_WAIT: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_prime  = 1'b1;
+
+        if (prime_done) begin
+          hw_wr.en.prime_out = 1'b1;
+          hw_wr.prime_out    = {31'b0, isprime};
+
+          ctrl_next.prime_valid = 1'b1;
+          state_next = ST_IDLE;
+        end
       end
 
-      ST_TRNG16: begin
-        // PSEUDOCODE:
-        // wait for future project-level TRNG block done
+      // --------------------------------------------------------
+      // PUF / TRNG one-shot launch-and-wait states
+      // --------------------------------------------------------
+      ST_PUF_START: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_puf    = 1'b1;
+
+        puf_gen = 1'b1;
+
+        state_next = ST_PUF_WAIT;
       end
 
+      ST_PUF_WAIT: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_puf    = 1'b1;
+
+        if (puf_ready) begin
+          hw_wr.en.puf_sig = 1'b1;
+          hw_wr.puf_sig    = puf_sig;
+
+          ctrl_next.puf_valid = 1'b1;
+          state_next = ST_IDLE;
+        end
+      end
+
+      ST_TRNG32_START: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_trng   = 1'b1;
+
+        trng_gen32 = 1'b1;
+
+        state_next = ST_TRNG32_WAIT;
+      end
+
+      ST_TRNG32_WAIT: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_trng   = 1'b1;
+
+        if (trng_ready) begin
+          hw_wr.en.trng_word = 1'b1;
+          hw_wr.trng_word    = trng_word;
+
+          ctrl_next.trng_valid = 1'b1;
+          state_next = ST_IDLE;
+        end
+      end
+
+      ST_TRNG16_START: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_trng   = 1'b1;
+
+        trng_gen16 = 1'b1;
+
+        state_next = ST_TRNG16_WAIT;
+      end
+
+      ST_TRNG16_WAIT: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_trng   = 1'b1;
+
+        if (trng_ready) begin
+          hw_wr.en.trng_word = 1'b1;
+          hw_wr.trng_word    = trng_word;
+
+          ctrl_next.trng_valid = 1'b1;
+          state_next = ST_IDLE;
+        end
+      end
+
+      // --------------------------------------------------------
+      // PRNG control states
+      // --------------------------------------------------------
       ST_PRNG_SEED: begin
-        // PSEUDOCODE:
-        // hw_wr.en.lfsr_seed = 1'b1;
-        // hw_wr.lfsr_seed    = seed source
         state_next = ST_IDLE;
       end
 
       ST_PRNG_RUN: begin
-        // PSEUDOCODE:
-        // continuously pulse shared LFSR and pack PRNG words
-        // if CMD_PRNG_STOP arrives, stop and return to IDLE
+        ctrl_next.busy_global  = 1'b1;
+        ctrl_next.busy_prng    = 1'b1;
+        ctrl_next.prng_running = 1'b1;
+
         if (cmd_valid && (cmd_opcode == CMD_PRNG_STOP)) begin
-          ctrl_next.busy_global  = 1'b0;
-          ctrl_next.busy_prng    = 1'b0;
           ctrl_next.prng_running = 1'b0;
           state_next = ST_IDLE;
         end
       end
 
-      ST_PRIME: begin
-        // PSEUDOCODE:
-        // prime_go = 1'b1;
-        // wait for future done signal after header/body update
-        // currently header has no done
-      end
-
       default: begin
         state_next = ST_LOCK_TRAP;
       end
-
     endcase
   end
 
@@ -387,8 +582,7 @@ module rot (
     if (!rst_n) begin
       state <= ST_LOCK_0;
       ctrl  <= '0;
-    end
-    else begin
+    end else begin
       state <= state_next;
       ctrl  <= ctrl_next;
     end
