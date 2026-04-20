@@ -1,106 +1,129 @@
-module prime #(parameter WIDTH = 11) (
+`timescale 1ns/1ps
+`default_nettype none
+
+ // ------------------------------------------------------------
+  // Constant-time prime checker with FI-hardened control FSM
+  // - checks every divisor from 2 through 31
+  // - no early exit
+  // - invalid FSM encoding falls into sticky fault state
+  // ------------------------------------------------------------
+module prime #(
+  parameter WIDTH = 10
+)(
   input  logic             clk, rst_n, go,
   input  logic [WIDTH-1:0] number,
-  output logic             isprime, isnotprime
+  output logic             isprime,
+  output logic             done
 );
 
-  logic next_isprime, next_isnotprime;
+  typedef enum logic [3:0] {
+    ST_IDLE  = 4'b0001,
+    ST_RUN   = 4'b0010,
+    ST_DONE  = 4'b0100,
+    ST_FAULT = 4'b1000
+  } prime_state_t;
 
-  logic [1:0] state, next_state;
-  logic [WIDTH-1:0] dividend, next_dividend;
-  logic [WIDTH-1:0] divisor,  next_divisor;
+  prime_state_t       state, state_next;
+  logic [WIDTH-1:0]   number_reg, number_next;
+  logic [5:0]         divisor, divisor_next;
+  logic               composite, composite_next;
+  logic               isprime_reg, isprime_next;
+  logic               state_valid;
 
-  localparam logic [1:0] ST_WAIT_FOR_GO   = 2'b00;
-  localparam logic [1:0] ST_TRY_TO_DIVIDE = 2'b01;
-  localparam logic [1:0] ST_ENDED         = 2'b10;
+  assign state_valid =
+    (state == ST_IDLE ) ||
+    (state == ST_RUN  ) ||
+    (state == ST_DONE ) ||
+    (state == ST_FAULT);
 
-  // Sequential (synchronous active-low reset, same as original)
-  always_ff @(posedge clk) begin
-    if (rst_n == 1'b0) begin
-      state      <= ST_WAIT_FOR_GO;
-      isprime    <= 1'b0;
-      isnotprime <= 1'b0;
-      dividend   <= {WIDTH{1'b0}};
-      divisor    <= {WIDTH{1'b0}};
-    end
-    else begin
-      state      <= next_state;
-      isprime    <= next_isprime;
-      isnotprime <= next_isnotprime;
-      dividend   <= next_dividend;
-      divisor    <= next_divisor;
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (!rst_n) begin
+      state       <= ST_IDLE;
+      number_reg  <= '0;
+      divisor     <= '0;
+      composite   <= 1'b0;
+      isprime_reg <= 1'b0;
+    end else begin
+      state       <= state_next;
+      number_reg  <= number_next;
+      divisor     <= divisor_next;
+      composite   <= composite_next;
+      isprime_reg <= isprime_next;
     end
   end
 
   always_comb begin
-    next_isprime    = isprime;
-    next_isnotprime = isnotprime;
-    next_state      = state;
-    next_dividend   = dividend;
-    next_divisor    = divisor;
+    state_next      = state;
+    number_next     = number_reg;
+    divisor_next    = divisor;
+    composite_next  = composite;
+    isprime_next    = isprime_reg;
 
-    case (state)
-      ST_WAIT_FOR_GO: begin
-        if (go) begin
-          next_dividend = number;
+    done    = 1'b0;
+    isprime = isprime_reg;
 
-          // Trivial checks (fast early-out)
-          // Note: original design can hang for number=1; this prevents that and reduces latency.
-          if (number < 2) begin
-            next_isnotprime = 1'b1;
-            next_state      = ST_ENDED;
-          end
-          else if (number == 2) begin
-            next_isprime = 1'b1;
-            next_state   = ST_ENDED;
-          end
-          else if (number[0] == 1'b0) begin
-            // even and >2 => not prime
-            next_isnotprime = 1'b1;
-            next_state      = ST_ENDED;
-          end
-          else begin
-            // odd >= 3: start with divisor=3 (skip testing divisor=2 again)
-            next_divisor = 'd3;
-            next_state   = ST_TRY_TO_DIVIDE;
+    if (!state_valid) begin
+      state_next      = ST_FAULT;
+      number_next     = '0;
+      divisor_next    = '0;
+      composite_next  = 1'b1;
+      isprime_next    = 1'b0;
+    end else begin
+      unique case (state)
+
+        ST_IDLE: begin
+          if (go) begin
+            number_next     = number;
+            divisor_next    = 6'd2;
+            composite_next  = 1'b0;
+            isprime_next    = 1'b0;
+            state_next      = ST_RUN;
           end
         end
-        else begin
-          next_state = ST_WAIT_FOR_GO;
+
+        ST_RUN: begin
+          if ((number_reg >= 2) &&
+              (number_reg != divisor) &&
+              (number_reg % divisor == 0)) begin
+            composite_next = 1'b1;
+          end
+
+          if (divisor == 6'd31) begin
+            if ((number_reg < 2) || composite_next) begin
+              isprime_next = 1'b0;
+            end else begin
+              isprime_next = 1'b1;
+            end
+
+            state_next = ST_DONE;
+          end else begin
+            divisor_next = divisor + 6'd1;
+          end
         end
-      end
 
-      ST_TRY_TO_DIVIDE: begin
-        // If divisor*divisor > dividend, we are done
-        logic [2*WIDTH-1:0] div_sq;
-        logic [2*WIDTH-1:0] dividend_ext;
-
-        div_sq  = divisor * divisor;
-        dividend_ext = {{WIDTH{1'b0}}, dividend};
-
-        if (div_sq > dividend_ext) begin
-          next_isprime = 1'b1;
-          next_state   = ST_ENDED;
+        ST_DONE: begin
+          done       = 1'b1;
+          state_next = ST_IDLE;
         end
-        else if ((dividend % divisor) == 0) begin
-          next_isnotprime = 1'b1;
-          next_state      = ST_ENDED;
-        end
-        else begin
-          // Divisor progression: odd divisors only (3,5,7,...)
-          next_divisor = divisor + 2;
-          next_state   = ST_TRY_TO_DIVIDE;
-        end
-      end
 
-      ST_ENDED: begin
-        next_state = ST_ENDED;
-      end
+        ST_FAULT: begin
+          isprime    = 1'b0;
+          done       = 1'b0;
+          state_next = ST_FAULT;
+        end
 
-      default: begin
-        next_state = ST_WAIT_FOR_GO;
-      end
-    endcase
+        default: begin
+          state_next      = ST_FAULT;
+          number_next     = '0;
+          divisor_next    = '0;
+          composite_next  = 1'b1;
+          isprime_next    = 1'b0;
+        end
+
+      endcase
+    end
   end
 
 endmodule
+
+`default_nettype wire

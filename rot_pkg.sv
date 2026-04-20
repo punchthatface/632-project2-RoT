@@ -4,7 +4,7 @@
 package rot_pkg;
 
   // ============================================================
-  // Basic widths required by the project
+  // Basic parameters
   // ============================================================
 
   // Width of the CPU-facing bus/register interface.
@@ -38,9 +38,6 @@ package rot_pkg;
   // ============================================================
   // Command encoding
   // ============================================================
-  // These are the values written by the CPU to ADDR_CMD.
-  // Unlock is intentionally NOT part of this command enum.
-  // Unlock is handled separately by the top-level lock FSM.
 
   typedef enum logic [CMD_W-1:0] {
     CMD_NOP        = 4'h0, // no operation
@@ -58,11 +55,8 @@ package rot_pkg;
   } cmd_t;
 
   // ============================================================
-  // Top-level control/status bookkeeping
+  // Top-level control/status (for cleaner code)
   // ============================================================
-  // This struct is convenient for the top-level controller.
-  // It holds the logical meaning of the RoT state.
-  // Later, these fields are packed into STATUS bits.
 
   typedef struct packed {
     logic unlocked;            // 1 when the lock FSM has been successfully unlocked
@@ -93,8 +87,6 @@ package rot_pkg;
   // ============================================================
   // STATUS register bit layout
   // ============================================================
-  // This struct describes the 32-bit word returned at ADDR_STATUS.
-  // Only 18 bits are currently used; the rest are returned as zero.
 
   typedef struct packed {
     logic [13:0] reserved;     // unused upper bits, returned as zero
@@ -121,8 +113,6 @@ package rot_pkg;
     logic busy_global;         // some RoT operation is active
   } status_bits_t;
 
-  // This union lets us access STATUS either as a raw 32-bit word
-  // or as named fields.
   typedef union packed {
     logic [BUSW-1:0] word;
     status_bits_t    bits;
@@ -131,10 +121,6 @@ package rot_pkg;
   // ============================================================
   // Stored CPU-visible registers
   // ============================================================
-  // This struct is the normal register bank stored in rot_csr.
-  // STATUS is not stored here because it is composed from live
-  // top-level control state. CMD is not stored here because it is
-  // write-to-act, not a persistent register.
 
   typedef struct packed {
     logic [BUSW-1:0] unlock_key;     // 32-bit word consumed by the unlock FSM
@@ -145,10 +131,7 @@ package rot_pkg;
 
     logic [PUF_W-1:0] puf_sig;       // 120-bit raw PUF signature written by hardware
 
-    logic [AES_W-1:0] puf_enc0;      // encrypted PUF chunk 0
-    logic [AES_W-1:0] puf_enc1;      // encrypted PUF chunk 1
-    logic [AES_W-1:0] puf_enc2;      // encrypted PUF chunk 2
-    logic [AES_W-1:0] puf_enc3;      // encrypted PUF chunk 3
+    logic [3:0][AES_W-1:0] puf_enc;  // encrypted PUF chunk 0
 
     logic [BUSW-1:0] trng_word;      // 32-bit TRNG output
     logic [BUSW-1:0] prng_word;      // 32-bit PRNG output buffer
@@ -160,8 +143,6 @@ package rot_pkg;
   // ============================================================
   // Hardware write-enable bundle
   // ============================================================
-  // These bits tell rot_csr which hardware-produced registers
-  // should be updated on a given cycle.
 
   typedef struct packed {
     logic aes_out;             // write aes_out
@@ -176,9 +157,6 @@ package rot_pkg;
   // ============================================================
   // Hardware writeback bundle
   // ============================================================
-  // This struct groups all hardware-produced register values that
-  // may be written into rot_csr. The matching enable bits above
-  // decide which of these values actually update the CSR bank.
 
   typedef struct packed {
     rot_hw_wr_en_t en;         // per-register write enables
@@ -186,10 +164,7 @@ package rot_pkg;
     logic [AES_W-1:0] aes_out; // AES output data
     logic [PUF_W-1:0] puf_sig; // raw PUF signature data
 
-    logic [AES_W-1:0] puf_enc0; // encrypted PUF chunk 0
-    logic [AES_W-1:0] puf_enc1; // encrypted PUF chunk 1
-    logic [AES_W-1:0] puf_enc2; // encrypted PUF chunk 2
-    logic [AES_W-1:0] puf_enc3; // encrypted PUF chunk 3
+    logic [3:0][AES_W-1:0] puf_enc; // encrypted PUF chunk
 
     logic [BUSW-1:0] trng_word; // TRNG result
     logic [BUSW-1:0] prng_word; // PRNG result
@@ -200,8 +175,6 @@ package rot_pkg;
   // ============================================================
   // Logical address map
   // ============================================================
-  // These are logical register addresses, like Project 1.
-  // Every address still returns 32 bits to the CPU.
 
   localparam logic [BUSW-1:0] ADDR_STATUS     = 32'h0000_0000; // read-only STATUS register
   localparam logic [BUSW-1:0] ADDR_CMD        = 32'h0000_0001; // write-only command trigger

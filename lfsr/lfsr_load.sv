@@ -1,48 +1,44 @@
+`timescale 1ns/1ps
 `default_nettype none
 
-
-module lfsr_load #(parameter WIDTH = 18) (
+module lfsr_load #(parameter WIDTH = 16) (
   input  logic             clk, rst_n,
   input  logic             load, pulse,
   input  logic [WIDTH-1:0] load_value,
   output logic [WIDTH-1:0] seq
 );
 
-localparam SEED = 18'd134;
+  // Primitive polynomial of degree 16:
+  // x^16 + x^14 + x^13 + x^11 + 1
+  //
+  // Implemented as a right-shifting Galois LFSR with tap mask B400.
+  // This module is intended for WIDTH=16 in Project 2.
+  localparam logic [WIDTH-1:0] SEED     = 16'hACE1;
+  localparam logic [WIDTH-1:0] TAP_MASK = 16'hB400;
 
+  logic [WIDTH-1:0] flops;
 
-logic [WIDTH-1:0] flops;
-
-always_ff @(posedge clk, negedge rst_n) begin
-  if (!rst_n)
-    flops <= SEED;
-  else begin
-    if (load)
-      flops <= load_value;
-    else if (pulse) begin
-      flops[17] <= flops[0];
-      flops[16] <= flops[17];
-      flops[15] <= flops[16];
-      flops[14] <= flops[15];
-      flops[13] <= flops[14];
-      flops[12] <= flops[13];
-      flops[11] <= flops[12];
-      flops[10] <= flops[11];
-      flops[9]  <= flops[10];
-      flops[8]  <= flops[9];
-      flops[7]  <= flops[8];
-      flops[6]  <= flops[7] ^ flops[0];  // tap for x^7
-      flops[5]  <= flops[6];
-      flops[4]  <= flops[5];
-      flops[3]  <= flops[4];
-      flops[2]  <= flops[3];
-      flops[1]  <= flops[2];
-      flops[0]  <= flops[1];
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (!rst_n) begin
+      flops <= SEED;
+    end else begin
+      if (load) begin
+        // Avoid the all-zero lockup state.
+        if (load_value == '0)
+          flops <= SEED;
+        else
+          flops <= load_value;
+      end else if (pulse) begin
+        if (flops[0])
+          flops <= (flops >> 1) ^ TAP_MASK;
+        else
+          flops <= (flops >> 1);
+      end
     end
   end
 
-end
-
-assign seq = flops;
+  assign seq = flops;
 
 endmodule
+
+`default_nettype wire

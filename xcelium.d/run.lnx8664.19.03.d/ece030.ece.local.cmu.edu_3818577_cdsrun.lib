@@ -1,0 +1,2 @@
+SOFTINCLUDE /afs/ece.cmu.edu/support/cds/share/image/usr/cds/xcelium-19.03.010/tools/inca/files/cds.lib
+define worklib ../worklib

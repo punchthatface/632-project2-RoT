@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 `default_nettype none
 `include "rot_pkg.sv"
 import rot_pkg::*;
@@ -13,7 +14,6 @@ module rot_csr (
   output rot_regs_t        regs_out,
   output logic             cmd_valid,
   output cmd_t             cmd_opcode,
-  output logic             unlock_key_we,
   output logic [BUSW-1:0]  data_to_cpu
 );
 
@@ -23,15 +23,10 @@ module rot_csr (
   always_comb begin
     cmd_valid      = 1'b0;
     cmd_opcode     = CMD_NOP;
-    unlock_key_we  = 1'b0;
 
     if (we && (addr == ADDR_CMD)) begin
       cmd_valid  = 1'b1;
       cmd_opcode = cmd_t'(data_from_cpu[CMD_W-1:0]);
-    end
-
-    if (we && (addr == ADDR_UNLOCK_KEY)) begin
-      unlock_key_we = 1'b1;
     end
   end
 

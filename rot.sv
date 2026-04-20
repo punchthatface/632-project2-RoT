@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 `default_nettype none
 `include "rot_pkg.sv"
 import rot_pkg::*;
@@ -8,6 +9,11 @@ module rot (
   output logic [BUSW-1:0] data_to_cpu,
   input  logic            re, we
 );
+
+  localparam int RO_NUM_LOCAL          = 16;
+  localparam int RO_COUNTER_SIZE_LOCAL = 10;
+  localparam int PRNG_BYTE_W           = 8;
+  localparam int PRNG_WORD_BYTES       = BUSW / PRNG_BYTE_W;
 
   typedef enum logic [4:0] {
     ST_LOCK_0,
@@ -54,20 +60,34 @@ module rot (
   status_reg_t status;
   rot_hw_wr_t  hw_wr;
 
-  logic        cmd_valid, unlock_key_we, unlock_start;
-  cmd_t        cmd_opcode;
+  logic cmd_valid, unlock_start;
+  cmd_t cmd_opcode;
 
-  logic               aes_go, aes_ctr_mode, aes_done;
-  logic [AES_W-1:0]   aes_block_in, aes_key, aes_block_out;
+  logic             aes_go, aes_done;
+  logic [AES_W-1:0] aes_block_in, aes_key, aes_block_out;
 
-  logic               prime_go, isprime, prime_done;
+  logic             prime_go, isprime, prime_done;
   logic [PRIME_W-1:0] prime_number;
 
-  logic               puf_gen, puf_ready;
-  logic [PUF_W-1:0]   puf_sig;
+  logic             lfsr_load, lfsr_pulse;
+  logic [LFSR_W-1:0] lfsr_load_value, lfsr_seq;
+  logic [AES_W-1:0]  ctr_block;
 
-  logic               trng_gen32, trng_gen16, trng_ready;
-  logic [TRNG_W-1:0]  trng_word;
+  logic [BUSW-1:0] prng_assembly, prng_assembly_next;
+  logic [1:0]      prng_byte_count, prng_byte_count_next;
+
+  logic                                 ro_enable_bank;
+  logic                                 puf_gen, pufready, puf_ro_enable;
+  logic [PUF_W-1:0]                     puf_sig;
+  logic [RO_NUM_LOCAL-1:0][RO_COUNTER_SIZE_LOCAL-1:0] ro_count;
+
+  logic                                 trng_gen32, trng_gen16, trngready, trng_ro_enable;
+  logic [TRNG_W-1:0]                    trng_word;
+  logic [RO_NUM_LOCAL-1:0]              ro_feedback;
+
+  assign unlock_start = cmd_valid && (cmd_opcode == CMD_UNLOCK);
+  assign ctr_block    = {{(AES_W-LFSR_W){1'b0}}, lfsr_seq};
+  assign ro_enable_bank = puf_ro_enable | trng_ro_enable;
 
   rot_csr u_rot_csr (
     .clk(clk), .rst_n(rst_n),
@@ -78,14 +98,11 @@ module rot (
     .regs_out(regs),
     .cmd_valid(cmd_valid),
     .cmd_opcode(cmd_opcode),
-    .unlock_key_we(unlock_key_we),
     .data_to_cpu(data_to_cpu)
   );
 
-  assign unlock_start = cmd_valid && (cmd_opcode == CMD_UNLOCK);
-
   // ------------------------------------------------------------
-  // Shared AES engine
+  // Shared engines / feature submodules
   // ------------------------------------------------------------
   aesctr #(
     .WIDTH(AES_W)
@@ -93,16 +110,12 @@ module rot (
     .clk(clk),
     .rst_n(rst_n),
     .go(aes_go),
-    .ctr_mode(aes_ctr_mode),
     .block_in(aes_block_in),
     .key(aes_key),
     .block_out(aes_block_out),
     .done(aes_done)
   );
 
-  // ------------------------------------------------------------
-  // Prime checker
-  // ------------------------------------------------------------
   prime #(
     .WIDTH(PRIME_W)
   ) u_prime (
@@ -114,26 +127,53 @@ module rot (
     .done(prime_done)
   );
 
-  // ------------------------------------------------------------
-  // Future PUF / TRNG blocks
-  // ------------------------------------------------------------
-  //
-  // puf u_puf (
-  //   .clk(clk),
-  //   .rst_n(rst_n),
-  //   .gen(puf_gen),
-  //   .puf_sig(puf_sig),
-  //   .pufready(puf_ready)
-  // );
-  //
-  // trng u_trng (
-  //   .clk(clk),
-  //   .rst_n(rst_n),
-  //   .gen32(trng_gen32),
-  //   .gen16(trng_gen16),
-  //   .trng_word(trng_word),
-  //   .trngready(trng_ready)
-  // );
+  lfsr_load #(
+    .WIDTH(LFSR_W)
+  ) u_lfsr (
+    .clk(clk),
+    .rst_n(rst_n),
+    .load(lfsr_load),
+    .pulse(lfsr_pulse),
+    .load_value(lfsr_load_value),
+    .seq(lfsr_seq)
+  );
+
+  ro_bank #(
+    .COUNTER_SIZE(RO_COUNTER_SIZE_LOCAL),
+    .RO_NUM(RO_NUM_LOCAL)
+  ) u_ro_bank (
+    .enable(ro_enable_bank),
+    .feedback(ro_feedback),
+    .count(ro_count)
+  );
+
+  puf #(
+    .COUNTER_SIZE(RO_COUNTER_SIZE_LOCAL),
+    .RO_NUM(RO_NUM_LOCAL),
+    .PUF_W(PUF_W)
+  ) u_puf (
+    .clk(clk),
+    .rst_n(rst_n),
+    .gen(puf_gen),
+    .ro_count(ro_count),
+    .ro_enable(puf_ro_enable),
+    .puf_sig(puf_sig),
+    .pufready(pufready)
+  );
+
+  trng #(
+    .RO_NUM(RO_NUM_LOCAL),
+    .WORD_W(TRNG_W)
+  ) u_trng (
+    .clk(clk),
+    .rst_n(rst_n),
+    .gen32(trng_gen32),
+    .gen16(trng_gen16),
+    .ro_feedback(ro_feedback),
+    .ro_enable(trng_ro_enable),
+    .trng_word(trng_word),
+    .trngready(trngready)
+  );
 
   // ------------------------------------------------------------
   // STATUS composition
@@ -165,24 +205,30 @@ module rot (
   end
 
   // ------------------------------------------------------------
-  // Top-level control FSM
+  // Top-level control FSM and datapath steering
   // ------------------------------------------------------------
   always_comb begin
     state_next = state;
     ctrl_next  = ctrl;
-    hw_wr      = '0';
+    hw_wr      = '0;
+
+    prng_assembly_next   = prng_assembly;
+    prng_byte_count_next = prng_byte_count;
 
     aes_go       = 1'b0;
-    aes_ctr_mode = 1'b0;
     aes_block_in = '0;
     aes_key      = '0;
 
     prime_go     = 1'b0;
     prime_number = regs.prime_in[PRIME_W-1:0];
 
-    puf_gen      = 1'b0;
-    trng_gen32   = 1'b0;
-    trng_gen16   = 1'b0;
+    lfsr_load       = 1'b0;
+    lfsr_pulse      = 1'b0;
+    lfsr_load_value = '0;
+
+    puf_gen         = 1'b0;
+    trng_gen32      = 1'b0;
+    trng_gen16      = 1'b0;
 
     ctrl_next.cmd_rejected = 1'b0;
 
@@ -200,6 +246,9 @@ module rot (
       // Unlock / obfuscation region
       // --------------------------------------------------------
       ST_LOCK_0: begin
+        if (cmd_valid && !unlock_start)
+          ctrl_next.cmd_rejected = 1'b1;
+
         if (unlock_start) begin
           ctrl_next.busy_global = 1'b1;
 
@@ -216,6 +265,8 @@ module rot (
 
       ST_LOCK_1: begin
         ctrl_next.busy_global = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         if (!regs.unlock_key[30] &&
             !regs.unlock_key[27] &&
@@ -229,6 +280,8 @@ module rot (
 
       ST_LOCK_2: begin
         ctrl_next.busy_global = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         if ( regs.unlock_key[29] &&
             !regs.unlock_key[26] &&
@@ -242,6 +295,8 @@ module rot (
 
       ST_LOCK_3: begin
         ctrl_next.busy_global = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         if ( regs.unlock_key[25] &&
              regs.unlock_key[21] &&
@@ -255,6 +310,8 @@ module rot (
 
       ST_LOCK_4: begin
         ctrl_next.busy_global = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         if ( regs.unlock_key[16] &&
              regs.unlock_key[12] &&
@@ -268,6 +325,8 @@ module rot (
 
       ST_LOCK_5: begin
         ctrl_next.busy_global = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         if (!regs.unlock_key[15] &&
             !regs.unlock_key[11] &&
@@ -281,6 +340,8 @@ module rot (
 
       ST_LOCK_6: begin
         ctrl_next.busy_global = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         if ( regs.unlock_key[14] &&
              regs.unlock_key[10] &&
@@ -294,6 +355,8 @@ module rot (
 
       ST_LOCK_7: begin
         ctrl_next.busy_global = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         if (!regs.unlock_key[9] &&
              regs.unlock_key[5] &&
@@ -310,6 +373,8 @@ module rot (
       ST_LOCK_TRAP: begin
         ctrl_next.lockout     = 1'b1;
         ctrl_next.busy_global = 1'b0;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
         state_next = ST_LOCK_TRAP;
       end
 
@@ -358,7 +423,9 @@ module rot (
 
             CMD_PRNG_START: begin
               ctrl_next.prng_word_valid = 1'b0;
-              state_next = ST_PRNG_RUN;
+              prng_assembly_next        = '0;
+              prng_byte_count_next      = '0;
+              state_next                = ST_PRNG_RUN;
             end
 
             CMD_PRNG_STOP: begin
@@ -377,14 +444,15 @@ module rot (
       end
 
       // --------------------------------------------------------
-      // AES / Prime one-shot launch-and-wait states
+      // AES-related one-shot launch-and-wait states
       // --------------------------------------------------------
       ST_AES_START: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_aes    = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         aes_go       = 1'b1;
-        aes_ctr_mode = 1'b0;
         aes_block_in = regs.aes_in;
         aes_key      = regs.aes_key;
 
@@ -394,8 +462,9 @@ module rot (
       ST_AES_WAIT: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_aes    = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
-        aes_ctr_mode = 1'b0;
         aes_block_in = regs.aes_in;
         aes_key      = regs.aes_key;
 
@@ -411,10 +480,11 @@ module rot (
       ST_AES_CTR_START: begin
         ctrl_next.busy_global  = 1'b1;
         ctrl_next.busy_aes_ctr = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         aes_go       = 1'b1;
-        aes_ctr_mode = 1'b1;
-        aes_block_in = '0;
+        aes_block_in = ctr_block;
         aes_key      = regs.aes_key;
 
         state_next = ST_AES_CTR_WAIT;
@@ -423,14 +493,17 @@ module rot (
       ST_AES_CTR_WAIT: begin
         ctrl_next.busy_global  = 1'b1;
         ctrl_next.busy_aes_ctr = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
-        aes_ctr_mode = 1'b1;
-        aes_block_in = '0;
+        aes_block_in = ctr_block;
         aes_key      = regs.aes_key;
 
         if (aes_done) begin
           hw_wr.en.aes_out = 1'b1;
-          hw_wr.aes_out    = aes_block_out;
+          hw_wr.aes_out    = aes_block_out ^ regs.aes_in;
+
+          lfsr_pulse = 1'b1;
 
           ctrl_next.aes_out_valid = 1'b1;
           state_next = ST_IDLE;
@@ -440,9 +513,10 @@ module rot (
       ST_AES_PUF_START: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_aes    = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         aes_go       = 1'b1;
-        aes_ctr_mode = 1'b0;
         aes_block_in = '0;
         aes_key      = regs.aes_key;
 
@@ -452,35 +526,14 @@ module rot (
       ST_AES_PUF_WAIT: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_aes    = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
-        aes_ctr_mode = 1'b0;
         aes_block_in = '0;
         aes_key      = regs.aes_key;
 
         if (aes_done) begin
           ctrl_next.aes_out_valid = 1'b1;
-          state_next = ST_IDLE;
-        end
-      end
-
-      ST_PRIME_START: begin
-        ctrl_next.busy_global = 1'b1;
-        ctrl_next.busy_prime  = 1'b1;
-
-        prime_go = 1'b1;
-
-        state_next = ST_PRIME_WAIT;
-      end
-
-      ST_PRIME_WAIT: begin
-        ctrl_next.busy_global = 1'b1;
-        ctrl_next.busy_prime  = 1'b1;
-
-        if (prime_done) begin
-          hw_wr.en.prime_out = 1'b1;
-          hw_wr.prime_out    = {31'b0, isprime};
-
-          ctrl_next.prime_valid = 1'b1;
           state_next = ST_IDLE;
         end
       end
@@ -491,6 +544,8 @@ module rot (
       ST_PUF_START: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_puf    = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         puf_gen = 1'b1;
 
@@ -500,8 +555,10 @@ module rot (
       ST_PUF_WAIT: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_puf    = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
-        if (puf_ready) begin
+        if (pufready) begin
           hw_wr.en.puf_sig = 1'b1;
           hw_wr.puf_sig    = puf_sig;
 
@@ -513,6 +570,8 @@ module rot (
       ST_TRNG32_START: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_trng   = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         trng_gen32 = 1'b1;
 
@@ -522,8 +581,10 @@ module rot (
       ST_TRNG32_WAIT: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_trng   = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
-        if (trng_ready) begin
+        if (trngready) begin
           hw_wr.en.trng_word = 1'b1;
           hw_wr.trng_word    = trng_word;
 
@@ -535,6 +596,8 @@ module rot (
       ST_TRNG16_START: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_trng   = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
         trng_gen16 = 1'b1;
 
@@ -544,8 +607,10 @@ module rot (
       ST_TRNG16_WAIT: begin
         ctrl_next.busy_global = 1'b1;
         ctrl_next.busy_trng   = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
 
-        if (trng_ready) begin
+        if (trngready) begin
           hw_wr.en.trng_word = 1'b1;
           hw_wr.trng_word    = trng_word;
 
@@ -558,6 +623,15 @@ module rot (
       // PRNG control states
       // --------------------------------------------------------
       ST_PRNG_SEED: begin
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
+
+        lfsr_load       = 1'b1;
+        lfsr_load_value = regs.trng_word[LFSR_W-1:0];
+
+        hw_wr.en.lfsr_seed = 1'b1;
+        hw_wr.lfsr_seed    = {{(BUSW-LFSR_W){1'b0}}, regs.trng_word[LFSR_W-1:0]};
+
         state_next = ST_IDLE;
       end
 
@@ -566,8 +640,54 @@ module rot (
         ctrl_next.busy_prng    = 1'b1;
         ctrl_next.prng_running = 1'b1;
 
+        if (cmd_valid && (cmd_opcode != CMD_PRNG_STOP))
+          ctrl_next.cmd_rejected = 1'b1;
+
+        lfsr_pulse = 1'b1;
+        prng_assembly_next = {prng_assembly[BUSW-PRNG_BYTE_W-1:0], lfsr_seq[PRNG_BYTE_W-1:0]};
+
+        if (prng_byte_count == PRNG_WORD_BYTES-1) begin
+          hw_wr.en.prng_word = 1'b1;
+          hw_wr.prng_word    = {prng_assembly[BUSW-PRNG_BYTE_W-1:0], lfsr_seq[PRNG_BYTE_W-1:0]};
+
+          ctrl_next.prng_word_valid = 1'b1;
+          prng_assembly_next        = '0;
+          prng_byte_count_next      = '0;
+        end else begin
+          prng_byte_count_next = prng_byte_count + 2'd1;
+        end
+
         if (cmd_valid && (cmd_opcode == CMD_PRNG_STOP)) begin
           ctrl_next.prng_running = 1'b0;
+          state_next             = ST_IDLE;
+        end
+      end
+
+      // --------------------------------------------------------
+      // Prime checker one-shot launch-and-wait states
+      // --------------------------------------------------------
+      ST_PRIME_START: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_prime  = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
+
+        prime_go = 1'b1;
+
+        state_next = ST_PRIME_WAIT;
+      end
+
+      ST_PRIME_WAIT: begin
+        ctrl_next.busy_global = 1'b1;
+        ctrl_next.busy_prime  = 1'b1;
+        if (cmd_valid)
+          ctrl_next.cmd_rejected = 1'b1;
+
+        if (prime_done) begin
+          hw_wr.en.prime_out = 1'b1;
+          hw_wr.prime_out    = {{(BUSW-1){1'b0}}, isprime};
+
+          ctrl_next.prime_valid = 1'b1;
           state_next = ST_IDLE;
         end
       end
@@ -582,9 +702,15 @@ module rot (
     if (!rst_n) begin
       state <= ST_LOCK_0;
       ctrl  <= '0;
+
+      prng_assembly   <= '0;
+      prng_byte_count <= '0;
     end else begin
       state <= state_next;
       ctrl  <= ctrl_next;
+
+      prng_assembly   <= prng_assembly_next;
+      prng_byte_count <= prng_byte_count_next;
     end
   end
 
