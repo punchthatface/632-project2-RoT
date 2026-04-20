@@ -1,0 +1,28 @@
+# xrun / Cadence simulation outputs
+xrun.*
+*.log
+*.history
+*.key
+*.trn
+*.dsn
+*.err
+
+# simulation directories
+INCA_libs/
+xcelium.d/
+waves.shm/
+simvision/
+*.shm/
+*.vcd
+*.fsdb
+
+# temp / compiled
+*.o
+*.so
+*.daidir/
+csrc/
+simv*
+
+# coverage
+cov_work/
+*.cov
