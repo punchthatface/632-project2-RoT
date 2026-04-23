@@ -255,20 +255,31 @@ module tb_uc3;
     @(posedge clk);
 
     // UC3 Section 3.3 flow:
-    // 1. CPU writes unlock key.
-    // 2. CPU issues unlock command.
-    // 3. CPU waits until idle.
-    // 4. CPU generates 16 TRNG bits.
-    // 5. CPU waits until idle.
-    // 6. CPU issues the PRNG seed command.
-    // 7. CPU waits until idle.
-    // 8. CPU starts the PRNG, collects 1024 bits over time, and then stops it.
-    unlock_rot;
+    // Step 1. CPU writes unlock key.
+    // Step 2. CPU issues unlock command.
+    // Step 3. CPU waits until idle.
+    // Step 4. CPU generates 16 TRNG bits.
+    // Step 5. CPU waits until idle.
+    // Step 6. CPU issues the PRNG seed command.
+    // Step 7. CPU waits until idle.
+    // Step 8. CPU starts the PRNG, collects 1024 bits over time, and then stops it.
+    $display("UC3 Step 1: write unlock key");
+    cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
+    $display("UC3 Step 2: issue unlock command");
+    cpu_write(ADDR_CMD, CMD_UNLOCK);
+    $display("UC3 Step 3: wait until RoT is idle after unlock");
+    wait_until_idle;
 
+    $display("UC3 Step 4: issue TRNG16 command");
     run_trng16_once(trng_word);
-    $display("TRNG16 seed source = %h", trng_word);
+    $display("UC3 Step 5: wait-until-idle completed for TRNG16");
+    $display("UC3 Step 5 result: trng_word = %h", trng_word);
 
+    $display("UC3 Step 6: issue PRNG seed command");
     seed_prng_from_trng;
+    $display("UC3 Step 7: wait-until-idle completed for PRNG seed");
+
+    $display("UC3 Step 8: start PRNG, collect 1024 bits, then stop PRNG");
     start_prng;
     collect_prng_words;
     stop_prng;

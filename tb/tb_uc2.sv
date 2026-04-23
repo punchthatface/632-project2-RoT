@@ -222,26 +222,35 @@ module tb_uc2;
     @(posedge clk);
 
     // UC2 Section 3.2 flow:
-    // 1. CPU writes unlock key.
-    // 2. CPU issues unlock command.
-    // 3. CPU waits until idle.
-    // 4. CPU generates 32 TRNG bits.
-    // 5. CPU waits until idle.
-    // 6. CPU reads the TRNG word.
-    // 7. CPU retries in software until the value is odd.
-    // 8. CPU commands prime checking on the low 10 bits.
-    // 9. CPU waits until idle.
-    // 10. CPU reads the prime result.
-    unlock_rot;
+    // Step 1. CPU writes unlock key.
+    // Step 2. CPU issues unlock command.
+    // Step 3. CPU waits until idle.
+    // Step 4. CPU generates 32 TRNG bits.
+    // Step 5. CPU waits until idle.
+    // Step 6. CPU reads the TRNG word.
+    // Step 7. CPU retries in software until the value is odd.
+    // Step 8. CPU commands prime checking on the low 10 bits.
+    // Step 9. CPU waits until idle.
+    // Step 10. CPU reads the prime result.
+    $display("UC2 Step 1: write unlock key");
+    cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
+    $display("UC2 Step 2: issue unlock command");
+    cpu_write(ADDR_CMD, CMD_UNLOCK);
+    $display("UC2 Step 3: wait until RoT is idle after unlock");
+    wait_until_idle;
 
     while (!odd_found) begin
+      $display("UC2 Step 4: issue TRNG32 command");
       attempts = attempts + 1;
       run_trng32_once(trng_word);
-      $display("TRNG attempt %0d produced %h", attempts, trng_word);
+      $display("UC2 Step 5: wait-until-idle completed for TRNG attempt %0d", attempts);
+      $display("UC2 Step 6: TRNG attempt %0d produced %h", attempts, trng_word);
 
       if (trng_word[0]) begin
-        $display("PASS: found odd TRNG word after %0d attempt(s)", attempts);
+        $display("UC2 Step 7: software retry loop found odd word after %0d attempt(s)", attempts);
         odd_found = 1'b1;
+      end else begin
+        $display("UC2 Step 7: TRNG word was even, retrying in software");
       end
 
       if (attempts > 20) begin
@@ -250,7 +259,10 @@ module tb_uc2;
       end
     end
 
+    $display("UC2 Step 8: issue prime check on low 10 TRNG bits");
     run_prime_check_on_trng_lsb;
+    $display("UC2 Step 9: wait-until-idle completed for prime check");
+    $display("UC2 Step 10: read prime result -> %h", prime_out_word);
 
     $display("UC2 final values:");
     $display("  trng_word      = %h", trng_word);

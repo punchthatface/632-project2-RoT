@@ -355,17 +355,18 @@ module tb_uc1;
     @(posedge clk);
 
     // UC1 Section 3.1 flow:
-    // 1. CPU attempts PUF generation while locked.
-    // 2. CPU writes unlock key.
-    // 3. CPU issues unlock command.
-    // 4. CPU waits until idle.
-    // 5. CPU loads a chosen AES key in order.
-    // 6. CPU checks AES key load status.
-    // 7. CPU commands PUF generation.
-    // 8. CPU waits until idle.
-    // 9. CPU selects PUF as the AES plaintext source.
-    // 10. CPU issues four AES commands, waiting between them.
-    // 11. CPU reads back encrypted PUF data 32 bits at a time.
+    // Step 1. CPU attempts PUF generation while locked.
+    // Step 2. CPU writes unlock key.
+    // Step 3. CPU issues unlock command.
+    // Step 4. CPU waits until idle.
+    // Step 5. CPU loads a chosen AES key in order.
+    // Step 6. CPU checks AES key load status.
+    // Step 7. CPU commands PUF generation.
+    // Step 8. CPU waits until idle.
+    // Step 9. CPU selects PUF as the AES plaintext source.
+    // Step 10. CPU issues four AES commands, waiting between them.
+    // Step 11. CPU reads back encrypted PUF data 32 bits at a time.
+    $display("UC1 Step 1: attempt PUF generation while locked");
     cpu_write(ADDR_CMD, CMD_PUF_GEN);
     repeat (10) @(posedge clk);
     cpu_read(ADDR_STATUS, status_word);
@@ -376,18 +377,44 @@ module tb_uc1;
     end
     $display("PASS: locked PUF command did not run");
 
-    unlock_rot;
+    $display("UC1 Step 2: write unlock key");
+    cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
+    $display("UC1 Step 3: issue unlock command");
+    cpu_write(ADDR_CMD, CMD_UNLOCK);
+    $display("UC1 Step 4: wait until RoT is idle after unlock");
+    wait_until_idle;
 
+    $display("UC1 Step 5: load the 128-bit AES key");
     load_good_aes_key(key_vec);
+    $display("UC1 Step 6: check AES key load status");
+    cpu_read(ADDR_STATUS, status_word);
+    status_dec.word = status_word;
+    if (!status_dec.bits.aes_key_correct || status_dec.bits.aes_key_incorrect) begin
+      $display("FAIL: AES key status was not correct after load");
+      $fatal;
+    end
 
+    $display("UC1 Step 7: issue PUF generation command");
     cpu_write(ADDR_CMD, CMD_PUF_GEN);
+    $display("UC1 Step 8: wait until RoT is idle after PUF generation");
     wait_for_puf_valid;
     read_puf_signature(puf_sig_snapshot);
+    $display("UC1 Step 8 result: puf_sig = %h", puf_sig_snapshot);
 
+    $display("UC1 Step 9: select PUF as the AES plaintext source");
     cpu_write(ADDR_AES_SRC, 32'h1);
 
-    for (idx = 0; idx < 4; idx = idx + 1)
+    $display("UC1 Step 10: issue four AES commands, one per PUF chunk");
+    for (idx = 0; idx < 4; idx = idx + 1) begin
+      $display("UC1 Step 10.%0d: encrypt PUF chunk %0d", idx + 1, idx);
       run_aes_puf_encrypt_and_check(idx, key_vec, puf_sig_snapshot);
+    end
+
+    $display("UC1 Step 11: read encrypted PUF data back 32 bits at a time");
+    for (idx = 0; idx < 4; idx = idx + 1) begin
+      read_puf_enc_block(idx, puf_enc_word);
+      $display("UC1 Step 11 chunk %0d: puf_enc = %h", idx, puf_enc_word);
+    end
 
     $display("tb_uc1 passed.");
     $finish;
