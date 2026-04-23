@@ -1,6 +1,5 @@
 `timescale 1ns/1ps
 `default_nettype none
-`include "rot_pkg.sv"
 import rot_pkg::*;
 
 module tb_uc1;
