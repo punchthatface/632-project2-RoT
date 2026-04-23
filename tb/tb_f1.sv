@@ -13,6 +13,7 @@ module tb_f1;
   logic [BUSW-1:0] data_to_cpu;
   logic            re, we;
   logic [BUSW-1:0] status_word;
+  logic [BUSW-1:0] out_before, out_after;
 
   rot dut (
     .clk(clk),
@@ -109,11 +110,6 @@ module tb_f1;
       end
     end
   endtask
-
-  // ------------------------------------------------------------
-  // Test
-  // ------------------------------------------------------------
-  logic [BUSW-1:0] out_before, out_after;
 
   initial begin
     rst_n = 0;
