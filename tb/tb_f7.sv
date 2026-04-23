@@ -15,8 +15,7 @@ module tb_f7;
 
   logic [BUSW-1:0] status_word;
   logic [BUSW-1:0] prime_out_word;
-  integer          busy_cycles_prime;
-  integer          busy_cycles_composite;
+  logic [BUSW-1:0] prime_out_before_fault;
   logic [3:0]      attack_request;
   logic [3:0]      attack_done;
 
@@ -145,6 +144,23 @@ module tb_f7;
     end
   endtask
 
+  task automatic check_constant_time_triplet(
+    input integer busy0,
+    input integer busy1,
+    input integer busy2,
+    input string  suite_label
+  );
+    begin
+      if ((busy0 != busy1) || (busy1 != busy2)) begin
+        $display("FAIL: %s did not run in constant time", suite_label);
+        $display("  busy_cycles = %0d, %0d, %0d", busy0, busy1, busy2);
+        $fatal;
+      end else begin
+        $display("PASS: %s used the same busy length for all cases", suite_label);
+      end
+    end
+  endtask
+
   task automatic run_fault_injection_case(
     input int         attack_id,
     input string      label
@@ -158,6 +174,11 @@ module tb_f7;
       @(posedge clk);
 
       unlock_rot;
+
+      cpu_write(ADDR_PRIME_IN, 32'd21);
+      cpu_write(ADDR_CMD, CMD_PRIME);
+      wait_until_idle;
+      cpu_read(ADDR_PRIME_OUT, prime_out_before_fault);
 
       cpu_write(ADDR_PRIME_IN, 32'd31);
       cpu_write(ADDR_CMD, CMD_PRIME);
@@ -184,6 +205,12 @@ module tb_f7;
           $display("FAIL: %s unexpectedly produced a valid prime result", label);
           $fatal;
         end
+      end
+
+      cpu_read(ADDR_PRIME_OUT, prime_out_word);
+      if (prime_out_word !== prime_out_before_fault) begin
+        $display("FAIL: %s corrupted PRIME_OUT despite fail-stop behavior", label);
+        $fatal;
       end
 
       $display("PASS: %s did not bypass prime control logic", label);
@@ -225,14 +252,19 @@ module tb_f7;
   end
 
   initial begin
+    integer busy_cycles_case0;
+    integer busy_cycles_case1;
+    integer busy_cycles_case2;
     rst_n               = 1'b0;
     addr                = '0;
     data_from_cpu       = '0;
     re                  = 1'b0;
     we                  = 1'b0;
-    busy_cycles_prime   = 0;
-    busy_cycles_composite = 0;
+    prime_out_before_fault = '0;
     attack_done         = '0;
+    busy_cycles_case0   = 0;
+    busy_cycles_case1   = 0;
+    busy_cycles_case2   = 0;
 
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
@@ -240,22 +272,15 @@ module tb_f7;
 
     // Feature F7 flow:
     // 1. Unlock the RoT.
-    // 2. Check a prime input and a composite input through the CPU-visible prime interface.
-    // 3. Confirm both runs take the same visible busy length.
+    // 2. Check several prime/composite inputs through the CPU-visible prime interface.
+    // 3. Confirm all runs take the same visible busy length.
     // 4. Attempt a fault injection on the internal control state and confirm fail-stop behavior.
     unlock_rot;
 
-    run_prime_case(32'd31, 1'b1, "prime input 31", busy_cycles_prime);
-    run_prime_case(32'd21, 1'b0, "composite input 21", busy_cycles_composite);
-
-    if (busy_cycles_prime != busy_cycles_composite) begin
-      $display("FAIL: prime checker did not run in constant time");
-      $display(" prime_busy_polls     = %0d", busy_cycles_prime);
-      $display(" composite_busy_polls = %0d", busy_cycles_composite);
-      $fatal;
-    end else begin
-      $display("PASS: prime and composite cases used the same busy length");
-    end
+    run_prime_case(32'd2,  1'b1, "constant-time case 0 input=2",  busy_cycles_case0);
+    run_prime_case(32'd21, 1'b0, "constant-time case 1 input=21", busy_cycles_case1);
+    run_prime_case(32'd31, 1'b1, "constant-time case 2 input=31", busy_cycles_case2);
+    check_constant_time_triplet(busy_cycles_case0, busy_cycles_case1, busy_cycles_case2, "constant-time prime suite");
 
     // ----------------------------------------------------------
     // Fault injection campaign:

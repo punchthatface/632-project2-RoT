@@ -6,11 +6,13 @@ module tb_f1;
 
   localparam int PERIOD     = 10;
   localparam int HALFPERIOD = PERIOD / 2;
+  localparam logic [BUSW-1:0] UNLOCK_KEY = 32'hB27D553A;
 
   logic            clk, rst_n;
   logic [BUSW-1:0] addr, data_from_cpu;
   logic [BUSW-1:0] data_to_cpu;
   logic            re, we;
+  logic [BUSW-1:0] status_word;
 
   rot dut (
     .clk(clk),
@@ -66,6 +68,48 @@ module tb_f1;
     repeat (n) @(posedge clk);
   endtask
 
+  task automatic wait_until_idle;
+    status_reg_t status_dec;
+    integer timeout;
+    logic idle_seen;
+    begin
+      timeout = 0;
+      idle_seen = 1'b0;
+      while ((timeout < 200) && !idle_seen) begin
+        cpu_read(ADDR_STATUS, status_word);
+        status_dec.word = status_word;
+        if (!status_dec.bits.busy_global)
+          idle_seen = 1'b1;
+        timeout = timeout + 1;
+      end
+      if (!idle_seen) begin
+        $display("FAIL: timed out waiting for RoT to become idle");
+        $fatal;
+      end
+    end
+  endtask
+
+  task automatic expect_locked_prime_blocked(input logic [BUSW-1:0] candidate_key, input string label);
+    begin
+      cpu_write(ADDR_UNLOCK_KEY, candidate_key);
+      cpu_write(ADDR_CMD, CMD_UNLOCK);
+      wait_cycles(12);
+
+      cpu_write(ADDR_PRIME_IN, 32'd31);
+      cpu_read(ADDR_PRIME_OUT, out_before);
+      cpu_write(ADDR_CMD, CMD_PRIME);
+      wait_cycles(40);
+      cpu_read(ADDR_PRIME_OUT, out_after);
+
+      if (out_before !== out_after) begin
+        $display("FAIL: %s unexpectedly unlocked the system", label);
+        $fatal;
+      end else begin
+        $display("PASS: %s kept the system locked", label);
+      end
+    end
+  endtask
+
   // ------------------------------------------------------------
   // Test
   // ------------------------------------------------------------
@@ -103,27 +147,11 @@ module tb_f1;
     end
 
     // ============================================================
-    // 2) Wrong key -> still blocked
+    // 2) Multiple wrong keys -> still blocked
     // ============================================================
-    cpu_write(ADDR_UNLOCK_KEY, 32'h00000000);
-    cpu_write(ADDR_CMD, CMD_UNLOCK);
-
-    wait_cycles(10);
-
-    cpu_write(ADDR_PRIME_IN, 32'd31);
-    cpu_read(ADDR_PRIME_OUT, out_before);
-
-    cpu_write(ADDR_CMD, CMD_PRIME);
-    wait_cycles(40);
-
-    cpu_read(ADDR_PRIME_OUT, out_after);
-
-    if (out_before !== out_after) begin
-      $display("FAIL: wrong key unlocked system");
-      $fatal;
-    end else begin
-      $display("PASS: wrong key keeps system locked");
-    end
+    expect_locked_prime_blocked(32'h00000000, "all-zero wrong key");
+    expect_locked_prime_blocked(32'hFFFFFFFF, "all-one wrong key");
+    expect_locked_prime_blocked(32'hB27D553B, "near-miss wrong key");
 
     // ============================================================
     // 3) Reset -> correct key -> should unlock
@@ -133,17 +161,14 @@ module tb_f1;
     rst_n = 1;
     @(posedge clk);
 
-    // Correct key derived from FSM checks
-    cpu_write(ADDR_UNLOCK_KEY, 32'hB27D553A);
+    cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
     cpu_write(ADDR_CMD, CMD_UNLOCK);
-
-    wait_cycles(10);
+    wait_until_idle;
 
     // Now PRIME should work
     cpu_write(ADDR_PRIME_IN, 32'd31);
     cpu_write(ADDR_CMD, CMD_PRIME);
-
-    wait_cycles(40);
+    wait_until_idle;
 
     cpu_read(ADDR_PRIME_OUT, out_after);
 

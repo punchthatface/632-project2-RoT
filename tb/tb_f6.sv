@@ -6,6 +6,7 @@ module tb_f6;
 
   localparam int PERIOD     = 10;
   localparam int HALFPERIOD = PERIOD / 2;
+  localparam int NUM_CTR_CALLS = 3;
   localparam logic [BUSW-1:0] UNLOCK_KEY = 32'hB27D553A;
 
   logic            clk, rst_n;
@@ -14,9 +15,12 @@ module tb_f6;
   logic            re, we;
 
   logic [BUSW-1:0] status_word;
-  logic [AES_W-1:0] ct0, ct1, ct2;
-  logic [LFSR_W-1:0] ctr_before_0, ctr_before_1, ctr_before_2;
-  logic [LFSR_W-1:0] ctr_after_0, ctr_after_1, ctr_after_2;
+  logic [AES_W-1:0] ct_set_a [0:NUM_CTR_CALLS-1];
+  logic [AES_W-1:0] ct_set_b [0:NUM_CTR_CALLS-1];
+  logic [LFSR_W-1:0] ctr_before_set_a [0:NUM_CTR_CALLS-1];
+  logic [LFSR_W-1:0] ctr_after_set_a  [0:NUM_CTR_CALLS-1];
+  logic [LFSR_W-1:0] ctr_before_set_b [0:NUM_CTR_CALLS-1];
+  logic [LFSR_W-1:0] ctr_after_set_b  [0:NUM_CTR_CALLS-1];
   integer           busy_cycles;
 
   rot dut (
@@ -216,25 +220,31 @@ module tb_f6;
 
   initial begin
     logic [AES_W-1:0] key_vec;
-    logic [AES_W-1:0] pt_vec;
+    logic [AES_W-1:0] pt_vec_a;
+    logic [AES_W-1:0] pt_vec_b;
+    logic [LFSR_W-1:0] seed_a;
+    logic [LFSR_W-1:0] seed_b;
+    integer i;
 
     rst_n         = 1'b0;
     addr          = '0;
     data_from_cpu = '0;
     re            = 1'b0;
     we            = 1'b0;
-    ct0           = '0;
-    ct1           = '0;
-    ct2           = '0;
-    ctr_before_0  = '0;
-    ctr_before_1  = '0;
-    ctr_before_2  = '0;
-    ctr_after_0   = '0;
-    ctr_after_1   = '0;
-    ctr_after_2   = '0;
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1) begin
+      ct_set_a[i]        = '0;
+      ct_set_b[i]        = '0;
+      ctr_before_set_a[i] = '0;
+      ctr_after_set_a[i]  = '0;
+      ctr_before_set_b[i] = '0;
+      ctr_after_set_b[i]  = '0;
+    end
 
-    key_vec = 128'h000102030405060708090A0B0C0D0E0F;
-    pt_vec  = 128'h00112233445566778899AABBCCDDEEFF;
+    key_vec  = 128'h000102030405060708090A0B0C0D0E0F;
+    pt_vec_a = 128'h00112233445566778899AABBCCDDEEFF;
+    pt_vec_b = 128'hFFEEDDCCBBAA99887766554433221100;
+    seed_a   = 16'h1D2B;
+    seed_b   = 16'hACE1;
 
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
@@ -245,52 +255,69 @@ module tb_f6;
     // 2. Load a valid AES key and plaintext.
     // 3. Seed the shared LFSR/counter.
     // 4. Issue repeated AES-CTR commands and show the shared LFSR/counter advances once per call.
+    // 5. Repeat with a different plaintext and seed to show the counter path works across multiple scenarios.
     unlock_rot;
     load_aes_key(key_vec);
-    load_aes_plaintext(pt_vec);
-    seed_lfsr(16'h1D2B);
+    load_aes_plaintext(pt_vec_a);
+    seed_lfsr(seed_a);
 
-    ctr_before_0 = dut.lfsr_seq;
-    run_aes_ctr_and_read(ct0, "first AES-CTR");
-    ctr_after_0 = dut.lfsr_seq;
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1) begin
+      ctr_before_set_a[i] = dut.lfsr_seq;
+      run_aes_ctr_and_read(ct_set_a[i], $sformatf("AES-CTR set A call %0d", i));
+      ctr_after_set_a[i] = dut.lfsr_seq;
+    end
 
-    ctr_before_1 = dut.lfsr_seq;
-    run_aes_ctr_and_read(ct1, "second AES-CTR");
-    ctr_after_1 = dut.lfsr_seq;
+    load_aes_plaintext(pt_vec_b);
+    seed_lfsr(seed_b);
 
-    ctr_before_2 = dut.lfsr_seq;
-    run_aes_ctr_and_read(ct2, "third AES-CTR");
-    ctr_after_2 = dut.lfsr_seq;
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1) begin
+      ctr_before_set_b[i] = dut.lfsr_seq;
+      run_aes_ctr_and_read(ct_set_b[i], $sformatf("AES-CTR set B call %0d", i));
+      ctr_after_set_b[i] = dut.lfsr_seq;
+    end
 
     $display("AES-CTR outputs:");
-    $display("  ct0 = %h", ct0);
-    $display("  ct1 = %h", ct1);
-    $display("  ct2 = %h", ct2);
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1)
+      $display("  ct_set_a[%0d] = %h", i, ct_set_a[i]);
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1)
+      $display("  ct_set_b[%0d] = %h", i, ct_set_b[i]);
     $display("AES-CTR counter progression:");
-    $display("  ctr_before_0 = %h  ctr_after_0 = %h", ctr_before_0, ctr_after_0);
-    $display("  ctr_before_1 = %h  ctr_after_1 = %h", ctr_before_1, ctr_after_1);
-    $display("  ctr_before_2 = %h  ctr_after_2 = %h", ctr_before_2, ctr_after_2);
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1)
+      $display("  set A %0d: %h -> %h", i, ctr_before_set_a[i], ctr_after_set_a[i]);
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1)
+      $display("  set B %0d: %h -> %h", i, ctr_before_set_b[i], ctr_after_set_b[i]);
 
-    if (ctr_after_0 !== lfsr_next_once(ctr_before_0)) begin
-      $display("FAIL: first AES-CTR call did not advance counter correctly");
-      $fatal;
+    for (i = 0; i < NUM_CTR_CALLS; i = i + 1) begin
+      if (ctr_after_set_a[i] !== lfsr_next_once(ctr_before_set_a[i])) begin
+        $display("FAIL: AES-CTR set A call %0d did not advance counter correctly", i);
+        $fatal;
+      end
+      if (ctr_after_set_b[i] !== lfsr_next_once(ctr_before_set_b[i])) begin
+        $display("FAIL: AES-CTR set B call %0d did not advance counter correctly", i);
+        $fatal;
+      end
+      if (^ct_set_a[i] === 1'bx || ^ct_set_b[i] === 1'bx) begin
+        $display("FAIL: AES-CTR produced X data in set %s call %0d", (^ct_set_a[i] === 1'bx) ? "A" : "B", i);
+        $fatal;
+      end
     end
 
-    if (ctr_after_1 !== lfsr_next_once(ctr_before_1)) begin
-      $display("FAIL: second AES-CTR call did not advance counter correctly");
-      $fatal;
+    for (i = 1; i < NUM_CTR_CALLS; i = i + 1) begin
+      if (ct_set_a[i] == ct_set_a[i-1]) begin
+        $display("FAIL: AES-CTR set A calls %0d and %0d produced identical ciphertexts", i-1, i);
+        $fatal;
+      end
+      if (ct_set_b[i] == ct_set_b[i-1]) begin
+        $display("FAIL: AES-CTR set B calls %0d and %0d produced identical ciphertexts", i-1, i);
+        $fatal;
+      end
     end
 
-    if (ctr_after_2 !== lfsr_next_once(ctr_before_2)) begin
-      $display("FAIL: third AES-CTR call did not advance counter correctly");
-      $fatal;
-    end
-
-    if ((ct0 == ct1) || (ct1 == ct2) || (ct0 == ct2)) begin
-      $display("FAIL: AES-CTR outputs did not reflect distinct counter states");
+    if (ct_set_a[0] == ct_set_b[0]) begin
+      $display("FAIL: changing plaintext and seed did not change the first AES-CTR ciphertext");
       $fatal;
     end else begin
-      $display("PASS: AES-CTR counter progressed and outputs differ across calls");
+      $display("PASS: AES-CTR counter progressed and ciphertexts changed across both scenarios");
     end
 
     $display("tb_f6 passed.");

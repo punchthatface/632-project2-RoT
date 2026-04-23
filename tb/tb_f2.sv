@@ -6,6 +6,7 @@ module tb_f2;
 
   localparam int PERIOD     = 10;
   localparam int HALFPERIOD = PERIOD / 2;
+  localparam int NUM_SAMPLES = 3;
   localparam logic [BUSW-1:0] UNLOCK_KEY = 32'hB27D553A;
 
   logic            clk, rst_n;
@@ -14,7 +15,7 @@ module tb_f2;
   logic            re, we;
 
   logic [BUSW-1:0] status_word;
-  logic [PUF_W-1:0] puf_sig_a, puf_sig_b;
+  logic [PUF_W-1:0] puf_sigs [0:NUM_SAMPLES-1];
   integer           busy_cycles;
 
   rot dut (
@@ -155,13 +156,14 @@ module tb_f2;
   endtask
 
   initial begin
+    integer i;
     rst_n         = 1'b0;
     addr          = '0;
     data_from_cpu = '0;
     re            = 1'b0;
     we            = 1'b0;
-    puf_sig_a     = '0;
-    puf_sig_b     = '0;
+    for (i = 0; i < NUM_SAMPLES; i = i + 1)
+      puf_sigs[i] = '0;
 
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
@@ -171,23 +173,27 @@ module tb_f2;
     // 1. Unlock the RoT.
     // 2. Generate a PUF signature.
     // 3. Read back the 120-bit signature through CPU-visible registers.
-    // 4. Generate it again later and confirm reproducibility.
+    // 4. Generate it multiple times at different points in time and confirm
+    //    the same 120-bit signature is reproduced.
     unlock_rot;
 
-    run_puf_and_read(puf_sig_a, "first PUF generation");
-    repeat (10) @(posedge clk);
-    run_puf_and_read(puf_sig_b, "second PUF generation");
+    for (i = 0; i < NUM_SAMPLES; i = i + 1) begin
+      run_puf_and_read(puf_sigs[i], $sformatf("PUF generation %0d", i));
+      repeat (20 + (i * 10)) @(posedge clk);
+    end
 
     $display("PUF signatures:");
-    $display("  puf_sig_a = %h", puf_sig_a);
-    $display("  puf_sig_b = %h", puf_sig_b);
+    for (i = 0; i < NUM_SAMPLES; i = i + 1)
+      $display("  puf_sigs[%0d] = %h", i, puf_sigs[i]);
 
-    if (puf_sig_a !== puf_sig_b) begin
-      $display("FAIL: PUF signature not reproducible");
-      $fatal;
-    end else begin
-      $display("PASS: PUF signature is reproducible");
+    for (i = 1; i < NUM_SAMPLES; i = i + 1) begin
+      if (puf_sigs[i] !== puf_sigs[0]) begin
+        $display("FAIL: PUF signature changed between sample 0 and sample %0d", i);
+        $fatal;
+      end
     end
+
+    $display("PASS: PUF signature is reproducible across %0d generations", NUM_SAMPLES);
 
     $display("tb_f2 passed.");
     $finish;

@@ -6,6 +6,7 @@ module tb_f3;
 
   localparam int PERIOD     = 10;
   localparam int HALFPERIOD = PERIOD / 2;
+  localparam int NUM_SAMPLES = 8;
   localparam logic [BUSW-1:0] UNLOCK_KEY = 32'hB27D553A;
 
   logic            clk, rst_n;
@@ -14,7 +15,7 @@ module tb_f3;
   logic            re, we;
 
   logic [BUSW-1:0] status_word;
-  logic [BUSW-1:0] trng_word_a, trng_word_b;
+  logic [BUSW-1:0] trng_words [0:NUM_SAMPLES-1];
   integer          busy_cycles;
 
   rot dut (
@@ -142,13 +143,17 @@ module tb_f3;
   endtask
 
   initial begin
+    integer i, j;
+    integer unique_count;
+    logic seen_before;
+
     rst_n         = 1'b0;
     addr          = '0;
     data_from_cpu = '0;
     re            = 1'b0;
     we            = 1'b0;
-    trng_word_a   = '0;
-    trng_word_b   = '0;
+    for (i = 0; i < NUM_SAMPLES; i = i + 1)
+      trng_words[i] = '0;
 
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
@@ -158,22 +163,34 @@ module tb_f3;
     // 1. Unlock the RoT.
     // 2. Generate 32 fresh TRNG bits.
     // 3. Read them back through the CPU-visible TRNG register.
-    // 4. Generate another 32 bits later and confirm non-reproducibility.
+    // 4. Repeat several times and confirm the sequence is not reproducible.
     unlock_rot;
 
-    run_trng32_and_read(trng_word_a, "first TRNG32");
-    repeat (5) @(posedge clk);
-    run_trng32_and_read(trng_word_b, "second TRNG32");
+    for (i = 0; i < NUM_SAMPLES; i = i + 1) begin
+      run_trng32_and_read(trng_words[i], $sformatf("TRNG32 sample %0d", i));
+      repeat (5 + (i * 2)) @(posedge clk);
+    end
 
     $display("TRNG32 outputs:");
-    $display("  trng_word_a = %h", trng_word_a);
-    $display("  trng_word_b = %h", trng_word_b);
+    for (i = 0; i < NUM_SAMPLES; i = i + 1)
+      $display("  trng_words[%0d] = %h", i, trng_words[i]);
 
-    if (trng_word_a == trng_word_b) begin
-      $display("FAIL: two TRNG32 outputs matched");
+    unique_count = 0;
+    for (i = 0; i < NUM_SAMPLES; i = i + 1) begin
+      seen_before = 1'b0;
+      for (j = 0; j < i; j = j + 1) begin
+        if (trng_words[i] == trng_words[j])
+          seen_before = 1'b1;
+      end
+      if (!seen_before)
+        unique_count = unique_count + 1;
+    end
+
+    if (unique_count < (NUM_SAMPLES / 2)) begin
+      $display("FAIL: repeated TRNG sampling produced only %0d unique values out of %0d samples", unique_count, NUM_SAMPLES);
       $fatal;
     end else begin
-      $display("PASS: two TRNG32 outputs differed");
+      $display("PASS: repeated TRNG sampling produced %0d unique values", unique_count);
     end
 
     $display("tb_f3 passed.");
