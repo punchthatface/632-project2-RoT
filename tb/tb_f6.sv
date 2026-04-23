@@ -16,6 +16,8 @@ module tb_f6;
 
   logic [BUSW-1:0] status_word;
   logic [AES_W-1:0] ct0, ct1, ct2;
+  logic [LFSR_W-1:0] ctr_before_0, ctr_before_1, ctr_before_2;
+  logic [LFSR_W-1:0] ctr_after_0, ctr_after_1, ctr_after_2;
   integer           busy_cycles;
 
   rot dut (
@@ -32,6 +34,17 @@ module tb_f6;
     clk = 1'b0;
     forever #HALFPERIOD clk = ~clk;
   end
+
+  function automatic logic [LFSR_W-1:0] lfsr_next_once(
+    input logic [LFSR_W-1:0] cur
+  );
+    begin
+      if (cur[0])
+        lfsr_next_once = (cur >> 1) ^ 16'hB400;
+      else
+        lfsr_next_once = (cur >> 1);
+    end
+  endfunction
 
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
@@ -214,6 +227,12 @@ module tb_f6;
     ct0           = '0;
     ct1           = '0;
     ct2           = '0;
+    ctr_before_0  = '0;
+    ctr_before_1  = '0;
+    ctr_before_2  = '0;
+    ctr_after_0   = '0;
+    ctr_after_1   = '0;
+    ctr_after_2   = '0;
 
     key_vec = 128'h000102030405060708090A0B0C0D0E0F;
     pt_vec  = 128'h00112233445566778899AABBCCDDEEFF;
@@ -226,26 +245,53 @@ module tb_f6;
     // 1. Unlock the RoT.
     // 2. Load a valid AES key and plaintext.
     // 3. Seed the shared LFSR/counter.
-    // 4. Issue repeated AES-CTR commands and confirm the ciphertext changes across calls.
+    // 4. Issue repeated AES-CTR commands and show the shared LFSR/counter advances once per call.
     unlock_rot;
     load_aes_key(key_vec);
     load_aes_plaintext(pt_vec);
     seed_lfsr(16'h1D2B);
 
+    ctr_before_0 = dut.lfsr_seq;
     run_aes_ctr_and_read(ct0, "first AES-CTR");
+    ctr_after_0 = dut.lfsr_seq;
+
+    ctr_before_1 = dut.lfsr_seq;
     run_aes_ctr_and_read(ct1, "second AES-CTR");
+    ctr_after_1 = dut.lfsr_seq;
+
+    ctr_before_2 = dut.lfsr_seq;
     run_aes_ctr_and_read(ct2, "third AES-CTR");
+    ctr_after_2 = dut.lfsr_seq;
 
     $display("AES-CTR outputs:");
     $display("  ct0 = %h", ct0);
     $display("  ct1 = %h", ct1);
     $display("  ct2 = %h", ct2);
+    $display("AES-CTR counter progression:");
+    $display("  ctr_before_0 = %h  ctr_after_0 = %h", ctr_before_0, ctr_after_0);
+    $display("  ctr_before_1 = %h  ctr_after_1 = %h", ctr_before_1, ctr_after_1);
+    $display("  ctr_before_2 = %h  ctr_after_2 = %h", ctr_before_2, ctr_after_2);
+
+    if (ctr_after_0 !== lfsr_next_once(ctr_before_0)) begin
+      $display("FAIL: first AES-CTR call did not advance counter correctly");
+      $fatal;
+    end
+
+    if (ctr_after_1 !== lfsr_next_once(ctr_before_1)) begin
+      $display("FAIL: second AES-CTR call did not advance counter correctly");
+      $fatal;
+    end
+
+    if (ctr_after_2 !== lfsr_next_once(ctr_before_2)) begin
+      $display("FAIL: third AES-CTR call did not advance counter correctly");
+      $fatal;
+    end
 
     if ((ct0 == ct1) || (ct1 == ct2) || (ct0 == ct2)) begin
-      $display("FAIL: AES-CTR outputs did not show counter progression");
+      $display("FAIL: AES-CTR outputs did not reflect distinct counter states");
       $fatal;
     end else begin
-      $display("PASS: AES-CTR outputs differ across calls");
+      $display("PASS: AES-CTR counter progressed and outputs differ across calls");
     end
 
     $display("tb_f6 passed.");

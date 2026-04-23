@@ -18,6 +18,8 @@ module tb_f7;
   logic [BUSW-1:0] prime_out_word;
   integer          busy_cycles_prime;
   integer          busy_cycles_composite;
+  logic [3:0]      attack_request;
+  logic [3:0]      attack_done;
 
   rot dut (
     .clk(clk),
@@ -144,20 +146,86 @@ module tb_f7;
     end
   endtask
 
-  task automatic inject_prime_fault;
+  task automatic run_fault_injection_case(
+    input int         attack_id,
+    input string      label
+  );
+    status_reg_t status_dec;
+    integer i;
     begin
+      rst_n = 1'b0;
+      repeat (2) @(posedge clk);
+      rst_n = 1'b1;
       @(posedge clk);
-      @(posedge clk);
-      force dut.u_prime.state = 4'b0011;
-      @(posedge clk);
-      release dut.u_prime.state;
+
+      unlock_rot;
+
+      cpu_write(ADDR_PRIME_IN, 32'd31);
+      cpu_write(ADDR_CMD, CMD_PRIME);
+
+      cpu_read(ADDR_STATUS, status_word);
+      status_dec.word = status_word;
+      if (!status_dec.bits.busy_global || !status_dec.bits.busy_prime) begin
+        $display("FAIL: %s did not enter busy PRIME state", label);
+        $fatal;
+      end
+
+      attack_request = attack_id[3:0];
+      wait (attack_done == attack_id[3:0]);
+      attack_request = '0;
+
+      for (i = 0; i < 40; i = i + 1) begin
+        cpu_read(ADDR_STATUS, status_word);
+        status_dec.word = status_word;
+        if (!status_dec.bits.busy_global) begin
+          $display("FAIL: %s unexpectedly allowed prime operation to complete", label);
+          $fatal;
+        end
+        if (status_dec.bits.prime_valid) begin
+          $display("FAIL: %s unexpectedly produced a valid prime result", label);
+          $fatal;
+        end
+      end
+
+      $display("PASS: %s did not bypass prime control logic", label);
     end
   endtask
 
+  // ----------------------------------------------------------
+  // Dedicated attack process, following the lab 9 structure:
+  // validation traffic lives elsewhere, and fault injection uses
+  // three total force/release pairs across three separate runs.
+  // ----------------------------------------------------------
   initial begin
-    status_reg_t status_dec;
-    integer i;
+    attack_request = '0;
+    attack_done    = '0;
 
+    wait (attack_request == 4'd1);
+    wait (dut.status.bits.busy_prime);
+    #1;
+    force dut.u_prime.state = 4'b0011;
+    #HALFPERIOD;
+    release dut.u_prime.state;
+    attack_done = 4'd1;
+
+    wait (attack_request == 4'd2);
+    wait (dut.status.bits.busy_prime);
+    #1;
+    force dut.u_prime.state = 4'b0000;
+    #HALFPERIOD;
+    release dut.u_prime.state;
+    attack_done = 4'd2;
+
+    wait (attack_request == 4'd3);
+    wait (dut.status.bits.busy_prime);
+    #1;
+    force dut.u_prime.state = 4'b0110;
+    #HALFPERIOD;
+    release dut.u_prime.state;
+    attack_done = 4'd3;
+  end
+
+  initial begin
     rst_n               = 1'b0;
     addr                = '0;
     data_from_cpu       = '0;
@@ -165,6 +233,7 @@ module tb_f7;
     we                  = 1'b0;
     busy_cycles_prime   = 0;
     busy_cycles_composite = 0;
+    attack_done         = '0;
 
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
@@ -190,36 +259,16 @@ module tb_f7;
     end
 
     // ----------------------------------------------------------
-    // Fault injection attempt on the prime checker control state
-    // A one-bit disturbance of the one-hot FSM should land in an
-    // invalid encoding and push the checker into fail-stop behavior.
+    // Fault injection campaign:
+    // 1. Three total force/release pairs
+    // 2. Separate attack block above
+    // 3. Reset between runs
+    // 4. Half-cycle fault duration
     // ----------------------------------------------------------
-    cpu_write(ADDR_PRIME_IN, 32'd31);
-    cpu_write(ADDR_CMD, CMD_PRIME);
+    run_fault_injection_case(1, "FI run 1");
+    run_fault_injection_case(2, "FI run 2");
+    run_fault_injection_case(3, "FI run 3");
 
-    cpu_read(ADDR_STATUS, status_word);
-    status_dec.word = status_word;
-    if (!status_dec.bits.busy_global || !status_dec.bits.busy_prime) begin
-      $display("FAIL: FI case did not enter busy PRIME state");
-      $fatal;
-    end
-
-    inject_prime_fault;
-
-    for (i = 0; i < 40; i = i + 1) begin
-      cpu_read(ADDR_STATUS, status_word);
-      status_dec.word = status_word;
-      if (!status_dec.bits.busy_global) begin
-        $display("FAIL: FI unexpectedly allowed prime operation to complete");
-        $fatal;
-      end
-      if (status_dec.bits.prime_valid) begin
-        $display("FAIL: FI unexpectedly produced a valid prime result");
-        $fatal;
-      end
-    end
-
-    $display("PASS: FI attempt did not bypass prime control logic");
     $display("tb_f7 passed.");
     $finish;
   end
