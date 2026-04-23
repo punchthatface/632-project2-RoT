@@ -10,9 +10,10 @@ module tb_lfsr_load;
   localparam logic [WIDTH-1:0] TAP_MASK = 16'hB400;
 
   logic             clk, rst_n;
-  logic             load, pulse;
+  logic             load, pulse, mode_prng;
   logic [WIDTH-1:0] load_value;
   logic [WIDTH-1:0] seq;
+  logic [7:0]       byte_out;
 
   lfsr_load #(
     .WIDTH(WIDTH)
@@ -21,8 +22,10 @@ module tb_lfsr_load;
     .rst_n(rst_n),
     .load(load),
     .pulse(pulse),
+    .mode_prng(mode_prng),
     .load_value(load_value),
-    .seq(seq)
+    .seq(seq),
+    .byte_out(byte_out)
   );
 
   // ------------------------------------------------------------
@@ -42,6 +45,32 @@ module tb_lfsr_load;
         lfsr_next = (cur >> 1) ^ TAP_MASK;
       else
         lfsr_next = (cur >> 1);
+    end
+  endfunction
+
+  function automatic logic [7:0] lfsr_next_byte(input logic [WIDTH-1:0] cur);
+    logic [WIDTH-1:0] tmp;
+    logic [7:0] bits;
+    int i;
+    begin
+      tmp = cur;
+      bits = '0;
+      for (i = 0; i < 8; i = i + 1) begin
+        tmp = lfsr_next(tmp);
+        bits[i] = tmp[0];
+      end
+      lfsr_next_byte = bits;
+    end
+  endfunction
+
+  function automatic logic [WIDTH-1:0] lfsr_next_8(input logic [WIDTH-1:0] cur);
+    logic [WIDTH-1:0] tmp;
+    int i;
+    begin
+      tmp = cur;
+      for (i = 0; i < 8; i = i + 1)
+        tmp = lfsr_next(tmp);
+      lfsr_next_8 = tmp;
     end
   endfunction
 
@@ -85,11 +114,13 @@ module tb_lfsr_load;
   // Test sequence
   // ------------------------------------------------------------
   logic [WIDTH-1:0] expected;
+  logic [7:0]       expected_byte;
 
   initial begin
     rst_n      = 1'b0;
     load       = 1'b0;
     pulse      = 1'b0;
+    mode_prng  = 1'b0;
     load_value = '0;
     expected   = '0;
 
@@ -146,6 +177,24 @@ module tb_lfsr_load;
       do_pulse;
       check_seq(expected, "multi-pulse progression");
     end
+
+    // PRNG mode must advance by 8 and expose 8 generated bits.
+    @(negedge clk);
+    mode_prng = 1'b1;
+    #1;
+    expected_byte = lfsr_next_byte(expected);
+    if (byte_out !== expected_byte) begin
+      $display("FAIL: PRNG mode byte_out expected=%h got=%h", expected_byte, byte_out);
+      $fatal;
+    end else begin
+      $display("PASS: PRNG mode byte_out=%h", byte_out);
+    end
+    expected = lfsr_next_8(expected);
+    do_pulse;
+    check_seq(expected, "PRNG mode advances eight steps");
+
+    @(negedge clk);
+    mode_prng = 1'b0;
 
     $display("All lfsr_load unit tests passed.");
     $finish;

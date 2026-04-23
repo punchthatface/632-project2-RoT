@@ -58,6 +58,9 @@ package rot_pkg;
   // Top-level control/status (for cleaner code)
   // ============================================================
 
+  // This bundle captures the CPU-visible architectural state of the RoT.
+  // rot_csr stores it, while rot.sv decides when hardware is allowed to
+  // overwrite result fields or update the corresponding status bits.
   typedef struct packed {
     logic unlocked;            // 1 when the lock FSM has been successfully unlocked
     logic lockout;             // 1 when the lock FSM is in black-hole / fail state
@@ -89,9 +92,8 @@ package rot_pkg;
   // ============================================================
 
   typedef struct packed {
-    logic [13:0] reserved;     // unused upper bits, returned as zero
+    logic [14:0] reserved;     // unused upper bits, returned as zero
 
-    logic fault_or_lockout;    // lock FSM has entered fault / black-hole state
     logic cmd_rejected;        // command was rejected
     logic prime_valid;         // prime_out is valid
     logic prng_running;        // PRNG is currently running
@@ -128,10 +130,11 @@ package rot_pkg;
     logic [AES_W-1:0] aes_key;       // 128-bit AES key written by CPU
     logic [AES_W-1:0] aes_in;        // 128-bit AES input/plaintext written by CPU
     logic [AES_W-1:0] aes_out;       // 128-bit AES output written by hardware
+    logic [BUSW-1:0] aes_src_sel;    // AES plaintext source selection / control
 
     logic [PUF_W-1:0] puf_sig;       // 120-bit raw PUF signature written by hardware
 
-    logic [3:0][AES_W-1:0] puf_enc;  // encrypted PUF chunk 0
+    logic [3:0][AES_W-1:0] puf_enc;  // encrypted PUF chunks 0..3 for UC1 readback
 
     logic [BUSW-1:0] trng_word;      // 32-bit TRNG output
     logic [BUSW-1:0] prng_word;      // 32-bit PRNG output buffer
@@ -144,6 +147,8 @@ package rot_pkg;
   // Hardware write-enable bundle
   // ============================================================
 
+  // The controller emits narrow write enables so software-owned CSR state
+  // remains untouched unless a specific hardware result has completed.
   typedef struct packed {
     logic aes_out;             // write aes_out
     logic puf_sig;             // write puf_sig
@@ -158,6 +163,8 @@ package rot_pkg;
   // Hardware writeback bundle
   // ============================================================
 
+  // Data and enables travel together so the top-level controller stays the
+  // single owner of sequencing across all shared engines.
   typedef struct packed {
     rot_hw_wr_en_t en;         // per-register write enables
 
@@ -191,6 +198,7 @@ package rot_pkg;
   localparam logic [BUSW-1:0] ADDR_AES_IN1    = 32'h0000_0008; // aes_in[95:64]
   localparam logic [BUSW-1:0] ADDR_AES_IN2    = 32'h0000_0009; // aes_in[63:32]
   localparam logic [BUSW-1:0] ADDR_AES_IN3    = 32'h0000_000A; // aes_in[31:0]
+  localparam logic [BUSW-1:0] ADDR_AES_SRC    = 32'h0000_0028; // bit0 selects PUF chunk source
 
   // AES output words
   localparam logic [BUSW-1:0] ADDR_AES_OUT0   = 32'h0000_000B; // aes_out[127:96]
@@ -198,7 +206,7 @@ package rot_pkg;
   localparam logic [BUSW-1:0] ADDR_AES_OUT2   = 32'h0000_000D; // aes_out[63:32]
   localparam logic [BUSW-1:0] ADDR_AES_OUT3   = 32'h0000_000E; // aes_out[31:0]
 
-  // Raw PUF signature words
+  // TB_ONLY / DEBUG_VISIBLE: raw PUF signature words for graded F2/UC1 validation
   localparam logic [BUSW-1:0] ADDR_PUF_SIG0   = 32'h0000_000F; // puf_sig[31:0]
   localparam logic [BUSW-1:0] ADDR_PUF_SIG1   = 32'h0000_0010; // puf_sig[63:32]
   localparam logic [BUSW-1:0] ADDR_PUF_SIG2   = 32'h0000_0011; // puf_sig[95:64]

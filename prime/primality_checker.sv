@@ -82,6 +82,8 @@ module prime #(
         end
 
         ST_RUN: begin
+          // No early exit: composite inputs continue through the same
+          // divisor schedule as prime inputs to preserve constant timing.
           if ((number_reg >= 2) &&
               (number_reg != divisor) &&
               (number_reg % divisor == 0)) begin
@@ -107,6 +109,7 @@ module prime #(
         end
 
         ST_FAULT: begin
+          // Invalid control flow becomes a sticky fail-stop condition.
           isprime    = 1'b0;
           done       = 1'b0;
           state_next = ST_FAULT;

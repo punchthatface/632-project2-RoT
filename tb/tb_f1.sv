@@ -84,7 +84,7 @@ module tb_f1;
     @(posedge clk);
 
     // ============================================================
-    // 1) Locked → PRIME should NOT execute
+    // 1) Locked -> PRIME should NOT execute
     // ============================================================
     cpu_write(ADDR_PRIME_IN, 32'd31);
 
@@ -104,7 +104,7 @@ module tb_f1;
     end
 
     // ============================================================
-    // 2) Wrong key → still blocked
+    // 2) Wrong key -> still blocked
     // ============================================================
     cpu_write(ADDR_UNLOCK_KEY, 32'h00000000);
     cpu_write(ADDR_CMD, CMD_UNLOCK);
@@ -127,7 +127,7 @@ module tb_f1;
     end
 
     // ============================================================
-    // 3) Reset → correct key → should unlock
+    // 3) Reset -> correct key -> should unlock
     // ============================================================
     rst_n = 0;
     repeat (2) @(posedge clk);

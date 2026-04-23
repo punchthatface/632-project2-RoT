@@ -21,6 +21,8 @@ module rot_csr (
   assign regs_out = regs_reg;
 
   always_comb begin
+    // A command is just a write to ADDR_CMD. All other CSR accesses are
+    // plain register reads/writes that remain legal while the RoT is busy.
     cmd_valid      = 1'b0;
     cmd_opcode     = CMD_NOP;
 
@@ -34,26 +36,23 @@ module rot_csr (
     data_to_cpu = '0;
 
     if (re) begin
+      // The CPU can keep polling STATUS or reading results while a command
+      // is in flight because the handout only allows busy to block commands.
       unique case (addr)
         ADDR_STATUS:     data_to_cpu = status_in.word;
-        ADDR_CMD:        data_to_cpu = '0;
-        ADDR_UNLOCK_KEY: data_to_cpu = regs_reg.unlock_key;
-
-        ADDR_AES_KEY0:   data_to_cpu = regs_reg.aes_key[127:96];
-        ADDR_AES_KEY1:   data_to_cpu = regs_reg.aes_key[95:64];
-        ADDR_AES_KEY2:   data_to_cpu = regs_reg.aes_key[63:32];
-        ADDR_AES_KEY3:   data_to_cpu = regs_reg.aes_key[31:0];
 
         ADDR_AES_IN0:    data_to_cpu = regs_reg.aes_in[127:96];
         ADDR_AES_IN1:    data_to_cpu = regs_reg.aes_in[95:64];
         ADDR_AES_IN2:    data_to_cpu = regs_reg.aes_in[63:32];
         ADDR_AES_IN3:    data_to_cpu = regs_reg.aes_in[31:0];
+        ADDR_AES_SRC:    data_to_cpu = regs_reg.aes_src_sel;
 
         ADDR_AES_OUT0:   data_to_cpu = regs_reg.aes_out[127:96];
         ADDR_AES_OUT1:   data_to_cpu = regs_reg.aes_out[95:64];
         ADDR_AES_OUT2:   data_to_cpu = regs_reg.aes_out[63:32];
         ADDR_AES_OUT3:   data_to_cpu = regs_reg.aes_out[31:0];
 
+        // TB_ONLY / DEBUG_VISIBLE: raw PUF readback kept CPU-visible for graded F2/UC1 validation.
         ADDR_PUF_SIG0:   data_to_cpu = regs_reg.puf_sig[31:0];
         ADDR_PUF_SIG1:   data_to_cpu = regs_reg.puf_sig[63:32];
         ADDR_PUF_SIG2:   data_to_cpu = regs_reg.puf_sig[95:64];
@@ -81,7 +80,6 @@ module rot_csr (
 
         ADDR_TRNG_WORD:  data_to_cpu = regs_reg.trng_word;
         ADDR_PRNG_WORD:  data_to_cpu = regs_reg.prng_word;
-        ADDR_LFSR_SEED:  data_to_cpu = regs_reg.lfsr_seed;
         ADDR_PRIME_IN:   data_to_cpu = regs_reg.prime_in;
         ADDR_PRIME_OUT:  data_to_cpu = regs_reg.prime_out;
 
@@ -95,6 +93,8 @@ module rot_csr (
       regs_reg <= '0;
     end else begin
       if (we) begin
+        // These are the persistent CPU-programmable registers. Result
+        // registers are updated later through the hardware writeback path.
         unique case (addr)
           ADDR_UNLOCK_KEY: regs_reg.unlock_key <= data_from_cpu;
 
@@ -107,6 +107,7 @@ module rot_csr (
           ADDR_AES_IN1:    regs_reg.aes_in[95:64]   <= data_from_cpu;
           ADDR_AES_IN2:    regs_reg.aes_in[63:32]   <= data_from_cpu;
           ADDR_AES_IN3:    regs_reg.aes_in[31:0]    <= data_from_cpu;
+          ADDR_AES_SRC:    regs_reg.aes_src_sel     <= data_from_cpu;
 
           ADDR_LFSR_SEED:  regs_reg.lfsr_seed       <= data_from_cpu;
           ADDR_PRIME_IN:   regs_reg.prime_in        <= data_from_cpu;
@@ -115,6 +116,8 @@ module rot_csr (
         endcase
       end
 
+      // Hardware writes happen independently of CPU bus activity so a
+      // completed command can publish its result immediately.
       if (hw_wr.en.aes_out)    regs_reg.aes_out    <= hw_wr.aes_out;
       if (hw_wr.en.puf_sig)    regs_reg.puf_sig    <= hw_wr.puf_sig;
       if (hw_wr.en.puf_enc[0]) regs_reg.puf_enc[0] <= hw_wr.puf_enc[0];

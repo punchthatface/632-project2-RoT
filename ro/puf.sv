@@ -2,7 +2,7 @@
 
 module puf #(
   parameter COUNTER_SIZE = 10,
-  parameter WAIT_CYCLES  = 32,
+  parameter WAIT_CYCLES  = 256,
   parameter RO_NUM       = 16,
   parameter PUF_W        = ((RO_NUM * (RO_NUM - 1)) / 2)
 )(
@@ -34,6 +34,8 @@ module puf #(
       sig = '0;
       k   = 0;
 
+      // Every bit records which RO in a unique pair counted faster during
+      // the sampling window, giving 16 choose 2 = 120 bits for RO_NUM=16.
       for (i = 0; i < RO_NUM; i = i + 1) begin
         for (j = i + 1; j < RO_NUM; j = j + 1) begin
           sig[k] = (counts[i] > counts[j]);
