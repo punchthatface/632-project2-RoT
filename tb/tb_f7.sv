@@ -34,6 +34,7 @@ module tb_f7;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -48,6 +49,7 @@ module tb_f7;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -63,6 +65,7 @@ module tb_f7;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -84,6 +87,7 @@ module tb_f7;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     begin
       cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
@@ -92,6 +96,7 @@ module tb_f7;
     end
   endtask
 
+  // Runs one prime/composite test case and returns the visible busy duration.
   task automatic run_prime_case(
     input  logic [BUSW-1:0] number_in,
     input  logic            expected_isprime,
@@ -144,6 +149,7 @@ module tb_f7;
     end
   endtask
 
+  // Confirms three prime-check runs all used the same busy length.
   task automatic check_constant_time_triplet(
     input integer busy0,
     input integer busy1,
@@ -161,6 +167,7 @@ module tb_f7;
     end
   endtask
 
+  // Executes one FI campaign run and checks the design stays in fail-stop behavior.
   task automatic run_fault_injection_case(
     input int         attack_id,
     input string      label

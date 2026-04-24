@@ -33,6 +33,7 @@ module tb_f5;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -48,6 +49,7 @@ module tb_f5;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -63,6 +65,7 @@ module tb_f5;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -84,6 +87,7 @@ module tb_f5;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     begin
       cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
@@ -92,6 +96,7 @@ module tb_f5;
     end
   endtask
 
+  // Writes the AES key in the required KEY0..KEY3 consecutive-cycle order.
   task automatic load_aes_key(input logic [AES_W-1:0] key_in);
     status_reg_t status_dec;
     begin
@@ -131,6 +136,7 @@ module tb_f5;
     end
   endtask
 
+  // Loads a full 128-bit plaintext block into the AES input registers.
   task automatic load_aes_plaintext(input logic [AES_W-1:0] pt_in);
     begin
       cpu_write(ADDR_AES_IN0, pt_in[127:96]);
@@ -140,6 +146,7 @@ module tb_f5;
     end
   endtask
 
+  // Reads the 128-bit AES output register bank back into one block value.
   task automatic read_aes_out(output logic [AES_W-1:0] block_out);
     logic [BUSW-1:0] w0, w1, w2, w3;
     begin
@@ -151,6 +158,7 @@ module tb_f5;
     end
   endtask
 
+  // Starts one plain AES command, waits for completion, and reads the ciphertext.
   task automatic run_aes_and_read(output logic [AES_W-1:0] block_out);
     status_reg_t status_dec;
     begin

@@ -38,6 +38,7 @@ module tb_f6;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Mirrors the shared LFSR's one-step update so this TB can check counter progression.
   function automatic logic [LFSR_W-1:0] lfsr_next_once(
     input logic [LFSR_W-1:0] cur
   );
@@ -49,6 +50,7 @@ module tb_f6;
     end
   endfunction
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -63,6 +65,7 @@ module tb_f6;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -78,6 +81,7 @@ module tb_f6;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -99,6 +103,7 @@ module tb_f6;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     begin
       cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
@@ -107,6 +112,7 @@ module tb_f6;
     end
   endtask
 
+  // Writes the AES key in the required KEY0..KEY3 consecutive-cycle order.
   task automatic load_aes_key(input logic [AES_W-1:0] key_in);
     status_reg_t status_dec;
     begin
@@ -146,6 +152,7 @@ module tb_f6;
     end
   endtask
 
+  // Loads a full 128-bit plaintext block into the AES input registers.
   task automatic load_aes_plaintext(input logic [AES_W-1:0] pt_in);
     begin
       cpu_write(ADDR_AES_IN0, pt_in[127:96]);
@@ -155,12 +162,14 @@ module tb_f6;
     end
   endtask
 
+  // Seeds the shared LFSR used as the AES-CTR counter source.
   task automatic seed_lfsr(input logic [LFSR_W-1:0] seed_in);
     begin
       cpu_write(ADDR_LFSR_SEED, {{(BUSW-LFSR_W){1'b0}}, seed_in});
     end
   endtask
 
+  // Reads the 128-bit AES output register bank back into one block value.
   task automatic read_aes_out(output logic [AES_W-1:0] ct_out);
     logic [BUSW-1:0] w0, w1, w2, w3;
     begin
@@ -172,6 +181,7 @@ module tb_f6;
     end
   endtask
 
+  // Starts one AES-CTR command, waits for completion, and reads the ciphertext.
   task automatic run_aes_ctr_and_read(
     output logic [AES_W-1:0] ct_out,
     input  string            label

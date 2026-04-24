@@ -48,6 +48,7 @@ module tb_uc1;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Extracts one 30-bit chunk from the stored 120-bit PUF signature.
   function automatic logic [PUF_CHUNK_W-1:0] puf_chunk(
     input logic [PUF_W-1:0] sig,
     input int               idx
@@ -62,6 +63,7 @@ module tb_uc1;
     end
   endfunction
 
+  // Zero-pads one 30-bit PUF chunk into the 128-bit AES plaintext block format.
   function automatic logic [AES_W-1:0] puf_chunk_block(
     input logic [PUF_W-1:0] sig,
     input int               idx
@@ -71,6 +73,7 @@ module tb_uc1;
     end
   endfunction
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -86,6 +89,7 @@ module tb_uc1;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -101,6 +105,7 @@ module tb_uc1;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -122,6 +127,7 @@ module tb_uc1;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     status_reg_t status_dec;
     begin
@@ -137,6 +143,7 @@ module tb_uc1;
     end
   endtask
 
+  // Loads a valid AES key using the exact ordering required by the key-check logic.
   task automatic load_good_aes_key(input logic [AES_W-1:0] key_in);
     status_reg_t status_dec;
     begin
@@ -176,17 +183,7 @@ module tb_uc1;
     end
   endtask
 
-  task automatic read_puf_signature(output logic [PUF_W-1:0] sig_out);
-    logic [BUSW-1:0] sig0, sig1, sig2, sig3;
-    begin
-      cpu_read(ADDR_PUF_SIG0, sig0);
-      cpu_read(ADDR_PUF_SIG1, sig1);
-      cpu_read(ADDR_PUF_SIG2, sig2);
-      cpu_read(ADDR_PUF_SIG3, sig3);
-      sig_out = {sig3[23:0], sig2, sig1, sig0};
-    end
-  endtask
-
+  // Waits for PUF generation to finish and confirms the valid bit is set.
   task automatic wait_for_puf_valid;
     status_reg_t status_dec;
     logic done_polling;
@@ -216,6 +213,7 @@ module tb_uc1;
     end
   endtask
 
+  // Reads the 128-bit AES output register bank back into one block value.
   task automatic read_aes_out(output logic [AES_W-1:0] block_out);
     logic [BUSW-1:0] w0, w1, w2, w3;
     begin
@@ -227,6 +225,7 @@ module tb_uc1;
     end
   endtask
 
+  // Reads one stored encrypted PUF block from its four CPU-visible ciphertext words.
   task automatic read_puf_enc_block(
     input  int              idx,
     output logic [AES_W-1:0] block_out
@@ -249,6 +248,7 @@ module tb_uc1;
     end
   endtask
 
+  // Encrypts one block with the local reference AES instance for UC1 comparisons.
   task automatic ref_encrypt_block(
     input  logic [AES_W-1:0] block_in,
     input  logic [AES_W-1:0] key_in,
@@ -280,6 +280,7 @@ module tb_uc1;
     end
   endtask
 
+  // Issues one AES command in PUF-source mode and checks both live and stored ciphertexts.
   task automatic run_aes_puf_encrypt_and_check(
     input int               idx,
     input logic [AES_W-1:0] key_in,
@@ -398,7 +399,7 @@ module tb_uc1;
     cpu_write(ADDR_CMD, CMD_PUF_GEN);
     $display("UC1 Step 8: wait until RoT is idle after PUF generation");
     wait_for_puf_valid;
-    read_puf_signature(puf_sig_snapshot);
+    puf_sig_snapshot = dut.u_rot_csr.regs_reg.puf_sig;
     $display("UC1 Step 8 result: puf_sig = %h", puf_sig_snapshot);
 
     $display("UC1 Step 9: select PUF as the AES plaintext source");

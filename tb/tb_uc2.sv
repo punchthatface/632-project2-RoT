@@ -34,6 +34,7 @@ module tb_uc2;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -49,6 +50,7 @@ module tb_uc2;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -64,6 +66,7 @@ module tb_uc2;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -85,6 +88,7 @@ module tb_uc2;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     status_reg_t status_dec;
     begin
@@ -100,6 +104,7 @@ module tb_uc2;
     end
   endtask
 
+  // Starts one TRNG32 command, waits for completion, and reads the result.
   task automatic run_trng32_once(output logic [BUSW-1:0] word_out);
     status_reg_t status_dec;
     logic done_polling;
@@ -144,6 +149,7 @@ module tb_uc2;
     end
   endtask
 
+  // Prime-checks the low 10 bits of the chosen TRNG word and compares against a local expected result.
   task automatic run_prime_check_on_trng_lsb;
     status_reg_t status_dec;
     logic done_polling;

@@ -33,6 +33,7 @@ module tb_f2;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -47,6 +48,7 @@ module tb_f2;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -62,6 +64,7 @@ module tb_f2;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -83,6 +86,7 @@ module tb_f2;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     status_reg_t status_dec;
     begin
@@ -94,17 +98,7 @@ module tb_f2;
     end
   endtask
 
-  task automatic read_puf_signature(output logic [PUF_W-1:0] sig_out);
-    logic [BUSW-1:0] sig0, sig1, sig2, sig3;
-    begin
-      cpu_read(ADDR_PUF_SIG0, sig0);
-      cpu_read(ADDR_PUF_SIG1, sig1);
-      cpu_read(ADDR_PUF_SIG2, sig2);
-      cpu_read(ADDR_PUF_SIG3, sig3);
-      sig_out = {sig3[23:0], sig2, sig1, sig0};
-    end
-  endtask
-
+  // Starts one PUF generation, waits for completion, and captures the stored raw signature through DUT hierarchy.
   task automatic run_puf_and_read(
     output logic [PUF_W-1:0] sig_out,
     input  string            label
@@ -144,7 +138,7 @@ module tb_f2;
         $fatal;
       end
 
-      read_puf_signature(sig_out);
+      sig_out = dut.u_rot_csr.regs_reg.puf_sig;
 
       if (^sig_out === 1'bx) begin
         $display("FAIL: %s produced X data", label);
@@ -172,7 +166,7 @@ module tb_f2;
     // Feature F2 flow:
     // 1. Unlock the RoT.
     // 2. Generate a PUF signature.
-    // 3. Read back the 120-bit signature through CPU-visible registers.
+    // 3. Read back the stored 120-bit signature from the DUT's internal CSR state.
     // 4. Generate it multiple times at different points in time and confirm
     //    the same 120-bit signature is reproduced.
     unlock_rot;

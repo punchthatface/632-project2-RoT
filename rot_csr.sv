@@ -52,12 +52,6 @@ module rot_csr (
         ADDR_AES_OUT2:   data_to_cpu = regs_reg.aes_out[63:32];
         ADDR_AES_OUT3:   data_to_cpu = regs_reg.aes_out[31:0];
 
-        // TB_ONLY / DEBUG_VISIBLE: raw PUF readback kept CPU-visible for graded F2/UC1 validation.
-        ADDR_PUF_SIG0:   data_to_cpu = regs_reg.puf_sig[31:0];
-        ADDR_PUF_SIG1:   data_to_cpu = regs_reg.puf_sig[63:32];
-        ADDR_PUF_SIG2:   data_to_cpu = regs_reg.puf_sig[95:64];
-        ADDR_PUF_SIG3:   data_to_cpu = {8'b0, regs_reg.puf_sig[119:96]};
-
         ADDR_PUF_ENC0_0: data_to_cpu = regs_reg.puf_enc[0][127:96];
         ADDR_PUF_ENC0_1: data_to_cpu = regs_reg.puf_enc[0][95:64];
         ADDR_PUF_ENC0_2: data_to_cpu = regs_reg.puf_enc[0][63:32];

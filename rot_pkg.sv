@@ -206,12 +206,6 @@ package rot_pkg;
   localparam logic [BUSW-1:0] ADDR_AES_OUT2   = 32'h0000_000D; // aes_out[63:32]
   localparam logic [BUSW-1:0] ADDR_AES_OUT3   = 32'h0000_000E; // aes_out[31:0]
 
-  // TB_ONLY / DEBUG_VISIBLE: raw PUF signature words for graded F2/UC1 validation
-  localparam logic [BUSW-1:0] ADDR_PUF_SIG0   = 32'h0000_000F; // puf_sig[31:0]
-  localparam logic [BUSW-1:0] ADDR_PUF_SIG1   = 32'h0000_0010; // puf_sig[63:32]
-  localparam logic [BUSW-1:0] ADDR_PUF_SIG2   = 32'h0000_0011; // puf_sig[95:64]
-  localparam logic [BUSW-1:0] ADDR_PUF_SIG3   = 32'h0000_0012; // {8'b0, puf_sig[119:96]}
-
   // Encrypted PUF chunk 0
   localparam logic [BUSW-1:0] ADDR_PUF_ENC0_0 = 32'h0000_0013; // puf_enc0[127:96]
   localparam logic [BUSW-1:0] ADDR_PUF_ENC0_1 = 32'h0000_0014; // puf_enc0[95:64]

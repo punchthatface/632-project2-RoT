@@ -33,6 +33,7 @@ module tb_f3;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -47,6 +48,7 @@ module tb_f3;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -62,6 +64,7 @@ module tb_f3;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -83,6 +86,7 @@ module tb_f3;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     begin
       cpu_write(ADDR_UNLOCK_KEY, UNLOCK_KEY);
@@ -91,6 +95,7 @@ module tb_f3;
     end
   endtask
 
+  // Starts one TRNG32 command, waits for valid output, and reads the 32-bit word.
   task automatic run_trng32_and_read(
     output logic [BUSW-1:0] word_out,
     input  string           label

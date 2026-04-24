@@ -36,6 +36,7 @@ module tb_f1;
   // ------------------------------------------------------------
   // CPU helpers
   // ------------------------------------------------------------
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -50,6 +51,7 @@ module tb_f1;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -65,10 +67,12 @@ module tb_f1;
     end
   endtask
 
+  // Inserts a fixed delay when this TB only needs time to pass.
   task automatic wait_cycles(input int n);
     repeat (n) @(posedge clk);
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -90,6 +94,7 @@ module tb_f1;
     end
   endtask
 
+  // Tries one unlock candidate and proves PRIME still cannot run afterward.
   task automatic expect_locked_prime_blocked(input logic [BUSW-1:0] candidate_key, input string label);
     begin
       cpu_write(ADDR_UNLOCK_KEY, candidate_key);

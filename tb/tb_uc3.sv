@@ -35,6 +35,7 @@ module tb_uc3;
     forever #HALFPERIOD clk = ~clk;
   end
 
+  // Performs one CPU-mapped write transaction.
   task automatic cpu_write(input logic [BUSW-1:0] a, input logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -50,6 +51,7 @@ module tb_uc3;
     end
   endtask
 
+  // Performs one CPU-mapped read transaction.
   task automatic cpu_read(input logic [BUSW-1:0] a, output logic [BUSW-1:0] d);
     begin
       @(negedge clk);
@@ -65,6 +67,7 @@ module tb_uc3;
     end
   endtask
 
+  // Polls STATUS until the top-level busy bit clears.
   task automatic wait_until_idle;
     status_reg_t status_dec;
     integer timeout;
@@ -86,6 +89,7 @@ module tb_uc3;
     end
   endtask
 
+  // Completes the normal CPU-visible unlock sequence.
   task automatic unlock_rot;
     status_reg_t status_dec;
     begin
@@ -101,6 +105,7 @@ module tb_uc3;
     end
   endtask
 
+  // Starts one TRNG16 command, waits for completion, and reads the result word.
   task automatic run_trng16_once(output logic [BUSW-1:0] word_out);
     status_reg_t status_dec;
     logic done_polling;
@@ -145,6 +150,7 @@ module tb_uc3;
     end
   endtask
 
+  // Issues the PRNG seed command so the shared LFSR is loaded from TRNG data.
   task automatic seed_prng_from_trng;
     status_reg_t status_dec;
     begin
@@ -160,6 +166,7 @@ module tb_uc3;
     end
   endtask
 
+  // Starts the PRNG streaming mode and checks the running status bits.
   task automatic start_prng;
     status_reg_t status_dec;
     begin
@@ -173,6 +180,7 @@ module tb_uc3;
     end
   endtask
 
+  // Collects the 32 PRNG output words that make up the required 1024-bit stream.
   task automatic collect_prng_words;
     status_reg_t status_dec;
     logic [BUSW-1:0] prev_word;
@@ -223,6 +231,7 @@ module tb_uc3;
     end
   endtask
 
+  // Stops PRNG streaming mode and confirms the design returns to idle.
   task automatic stop_prng;
     status_reg_t status_dec;
     begin
